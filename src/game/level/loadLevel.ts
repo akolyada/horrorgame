@@ -112,24 +112,73 @@ function makeNormalMap(sourceTexture: THREE.CanvasTexture, strength: number): TH
   return tex;
 }
 
+/** Generate a procedural roughness variation map */
+function makeRoughnessMap(
+  w: number, h: number,
+  baseRoughness: number, variation: number,
+  repeat: THREE.Vector2
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  // Fill with base roughness value (mapped to 0-255)
+  const baseVal = Math.round(baseRoughness * 255);
+  ctx.fillStyle = `rgb(${baseVal},${baseVal},${baseVal})`;
+  ctx.fillRect(0, 0, w, h);
+
+  // Add noise variation
+  for (let i = 0; i < 2000; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const offset = (Math.random() - 0.5) * variation * 255;
+    const v = Math.max(0, Math.min(255, Math.round(baseVal + offset)));
+    ctx.fillStyle = `rgba(${v},${v},${v},0.15)`;
+    ctx.fillRect(x, y, 3, 3);
+  }
+
+  // Wet/shiny patches (lower roughness = shinier)
+  for (let i = 0; i < 4; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const r = 10 + Math.random() * 25;
+    const shinyVal = Math.round((baseRoughness - variation * 0.7) * 255);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, `rgba(${shinyVal},${shinyVal},${shinyVal},0.4)`);
+    grad.addColorStop(1, `rgba(${shinyVal},${shinyVal},${shinyVal},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.copy(repeat);
+  return tex;
+}
+
+// Texture resolution — 512 for desktop, 256 fallback for low-end
+const TEX_RES = (navigator.hardwareConcurrency ?? 4) >= 4 ? 512 : 256;
+const S = TEX_RES / 256; // scale factor for drawing ops
+
 function makeWallTexture(): THREE.CanvasTexture {
-  return makeCanvasTexture(256, 256, (ctx) => {
+  return makeCanvasTexture(TEX_RES, TEX_RES, (ctx) => {
     // Base: dirty beige plaster
     ctx.fillStyle = '#8a7e6b';
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, TEX_RES, TEX_RES);
     // Noise grain
-    for (let i = 0; i < 3000; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
+    for (let i = 0; i < 3000 * S; i++) {
+      const x = Math.random() * TEX_RES;
+      const y = Math.random() * TEX_RES;
       const v = Math.floor(120 + Math.random() * 30);
       ctx.fillStyle = `rgba(${v},${v - 10},${v - 20},0.15)`;
-      ctx.fillRect(x, y, 2, 2);
+      ctx.fillRect(x, y, 2 * S, 2 * S);
     }
     // Stain patches
     for (let i = 0; i < 5; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
-      const r = 20 + Math.random() * 40;
+      const x = Math.random() * TEX_RES;
+      const y = Math.random() * TEX_RES;
+      const r = (20 + Math.random() * 40) * S;
       const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
       grad.addColorStop(0, 'rgba(60,50,40,0.25)');
       grad.addColorStop(1, 'rgba(60,50,40,0)');
@@ -138,14 +187,14 @@ function makeWallTexture(): THREE.CanvasTexture {
     }
     // Cracks
     ctx.strokeStyle = 'rgba(40,35,30,0.3)';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 * S;
     for (let i = 0; i < 3; i++) {
       ctx.beginPath();
-      let cx = Math.random() * 256, cy = Math.random() * 256;
+      let cx = Math.random() * TEX_RES, cy = Math.random() * TEX_RES;
       ctx.moveTo(cx, cy);
       for (let s = 0; s < 8; s++) {
-        cx += (Math.random() - 0.5) * 30;
-        cy += Math.random() * 20;
+        cx += (Math.random() - 0.5) * 30 * S;
+        cy += Math.random() * 20 * S;
         ctx.lineTo(cx, cy);
       }
       ctx.stroke();
@@ -154,33 +203,34 @@ function makeWallTexture(): THREE.CanvasTexture {
 }
 
 function makeFloorTexture(): THREE.CanvasTexture {
-  return makeCanvasTexture(256, 256, (ctx) => {
+  return makeCanvasTexture(TEX_RES, TEX_RES, (ctx) => {
     // Dark tile pattern
     ctx.fillStyle = '#2a2a2e';
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, TEX_RES, TEX_RES);
     // Tile grid
-    const tileSize = 64;
+    const tileSize = 64 * S;
     ctx.strokeStyle = 'rgba(20,20,22,0.6)';
-    ctx.lineWidth = 2;
-    for (let x = 0; x <= 256; x += tileSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+    ctx.lineWidth = 2 * S;
+    for (let x = 0; x <= TEX_RES; x += tileSize) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, TEX_RES); ctx.stroke();
     }
-    for (let y = 0; y <= 256; y += tileSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(256, y); ctx.stroke();
+    for (let y = 0; y <= TEX_RES; y += tileSize) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(TEX_RES, y); ctx.stroke();
     }
     // Tile color variation
-    for (let tx = 0; tx < 4; tx++) {
-      for (let ty = 0; ty < 4; ty++) {
+    const tiles = Math.round(TEX_RES / tileSize);
+    for (let tx = 0; tx < tiles; tx++) {
+      for (let ty = 0; ty < tiles; ty++) {
         const v = Math.floor(Math.random() * 15);
         ctx.fillStyle = `rgba(${v},${v},${v + 2},0.2)`;
-        ctx.fillRect(tx * tileSize + 2, ty * tileSize + 2, tileSize - 4, tileSize - 4);
+        ctx.fillRect(tx * tileSize + 2 * S, ty * tileSize + 2 * S, tileSize - 4 * S, tileSize - 4 * S);
       }
     }
     // Dirt spots
     for (let i = 0; i < 8; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
-      const r = 5 + Math.random() * 15;
+      const x = Math.random() * TEX_RES;
+      const y = Math.random() * TEX_RES;
+      const r = (5 + Math.random() * 15) * S;
       const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
       grad.addColorStop(0, 'rgba(15,12,10,0.3)');
       grad.addColorStop(1, 'rgba(15,12,10,0)');
@@ -191,25 +241,25 @@ function makeFloorTexture(): THREE.CanvasTexture {
 }
 
 function makeCeilingTexture(): THREE.CanvasTexture {
-  return makeCanvasTexture(256, 256, (ctx) => {
+  return makeCanvasTexture(TEX_RES, TEX_RES, (ctx) => {
     // Stained ceiling panels
     ctx.fillStyle = '#555550';
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, TEX_RES, TEX_RES);
     // Panel seams
-    const panelSize = 128;
+    const panelSize = 128 * S;
     ctx.strokeStyle = 'rgba(30,30,28,0.5)';
-    ctx.lineWidth = 2;
-    for (let x = 0; x <= 256; x += panelSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+    ctx.lineWidth = 2 * S;
+    for (let x = 0; x <= TEX_RES; x += panelSize) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, TEX_RES); ctx.stroke();
     }
-    for (let y = 0; y <= 256; y += panelSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(256, y); ctx.stroke();
+    for (let y = 0; y <= TEX_RES; y += panelSize) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(TEX_RES, y); ctx.stroke();
     }
     // Water stains
     for (let i = 0; i < 4; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
-      const r = 15 + Math.random() * 30;
+      const x = Math.random() * TEX_RES;
+      const y = Math.random() * TEX_RES;
+      const r = (15 + Math.random() * 30) * S;
       const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
       grad.addColorStop(0, 'rgba(70,60,40,0.2)');
       grad.addColorStop(0.7, 'rgba(70,60,40,0.1)');
@@ -253,68 +303,78 @@ function createKindergartenLevel(root: THREE.Group): Level {
   const wallTex = makeWallTexture();
   wallTex.repeat.set(2, 1);
   const wallNormal = makeNormalMap(wallTex, 2.0);
+  const wallRoughMap = makeRoughnessMap(256, 256, 0.92, 0.15, wallTex.repeat);
   const wallMat = new THREE.MeshStandardMaterial({
     color: 0x8a7e6b,
-    roughness: 0.95,
+    roughness: 1.0,
     metalness: 0.0,
     emissive: 0x050403,
     emissiveIntensity: 0.3,
     map: wallTex,
     normalMap: wallNormal,
     normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: wallRoughMap,
   });
 
   const wallTexDark = makeWallTexture();
   wallTexDark.repeat.set(2, 1);
   const wallDarkNormal = makeNormalMap(wallTexDark, 2.0);
+  const wallDarkRoughMap = makeRoughnessMap(256, 256, 0.92, 0.15, wallTexDark.repeat);
   const wallMatDark = new THREE.MeshStandardMaterial({
     color: 0x5a5347,
-    roughness: 0.95,
+    roughness: 1.0,
     metalness: 0.0,
     emissive: 0x030302,
     emissiveIntensity: 0.2,
     map: wallTexDark,
     normalMap: wallDarkNormal,
     normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: wallDarkRoughMap,
   });
 
   const floorTex = makeFloorTexture();
   floorTex.repeat.set(4, 3);
   const floorNormal = makeNormalMap(floorTex, 3.0);
+  const floorRoughMap = makeRoughnessMap(256, 256, 0.9, 0.2, floorTex.repeat);
   const floorMat = new THREE.MeshStandardMaterial({
     color: 0x2a2a2e,
-    roughness: 0.92,
+    roughness: 1.0,
     metalness: 0.02,
     emissive: 0x020203,
     emissiveIntensity: 0.1,
     map: floorTex,
     normalMap: floorNormal,
     normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: floorRoughMap,
   });
 
   const corrFloorTex = makeFloorTexture();
   corrFloorTex.repeat.set(1, 6);
   const corrFloorNormal = makeNormalMap(corrFloorTex, 3.0);
+  const corrFloorRoughMap = makeRoughnessMap(256, 256, 0.9, 0.2, corrFloorTex.repeat);
   const corridorFloorMat = new THREE.MeshStandardMaterial({
     color: 0x22222a,
-    roughness: 0.95,
+    roughness: 1.0,
     metalness: 0.02,
     map: corrFloorTex,
     normalMap: corrFloorNormal,
     normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: corrFloorRoughMap,
   });
 
   const ceilTex = makeCeilingTexture();
   ceilTex.repeat.set(3, 2);
   const ceilNormal = makeNormalMap(ceilTex, 1.5);
+  const ceilRoughMap = makeRoughnessMap(256, 256, 0.88, 0.1, ceilTex.repeat);
   const ceilingMat = new THREE.MeshStandardMaterial({
     color: 0x555550,
-    roughness: 0.9,
+    roughness: 1.0,
     metalness: 0.0,
     side: THREE.DoubleSide,
     map: ceilTex,
     normalMap: ceilNormal,
     normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: ceilRoughMap,
   });
 
   const rubbleMat = new THREE.MeshStandardMaterial({
@@ -347,20 +407,54 @@ function createKindergartenLevel(root: THREE.Group): Level {
     ));
   };
 
-  /** Add a floor plane */
+  /** Add a floor plane with faux AO at edges */
   const addFloor = (cx: number, cz: number, sx: number, sz: number, mat?: THREE.Material) => {
-    const geo = new THREE.PlaneGeometry(sx, sz);
-    const mesh = new THREE.Mesh(geo, mat || floorMat);
+    const geo = new THREE.PlaneGeometry(sx, sz, 4, 4);
+    // Darken edge vertices for faux ambient occlusion
+    const posAttr = geo.getAttribute('position');
+    const colors = new Float32Array(posAttr.count * 3);
+    const halfX = sx / 2, halfZ = sz / 2;
+    for (let i = 0; i < posAttr.count; i++) {
+      const lx = posAttr.getX(i);
+      const lz = posAttr.getY(i); // PlaneGeometry: Y in local = Z in world after rotation
+      const edgeX = 1 - Math.pow(Math.abs(lx) / halfX, 3);
+      const edgeZ = 1 - Math.pow(Math.abs(lz) / halfZ, 3);
+      const ao = 0.65 + 0.35 * Math.min(edgeX, edgeZ);
+      colors[i * 3] = ao;
+      colors[i * 3 + 1] = ao;
+      colors[i * 3 + 2] = ao;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const useMat = (mat || floorMat) as THREE.MeshStandardMaterial;
+    const aoMat = useMat.clone();
+    aoMat.vertexColors = true;
+    const mesh = new THREE.Mesh(geo, aoMat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(cx, 0, cz);
     mesh.receiveShadow = true;
     root.add(mesh);
   };
 
-  /** Add a ceiling plane */
+  /** Add a ceiling plane with faux AO at edges */
   const addCeiling = (cx: number, cz: number, sx: number, sz: number) => {
-    const geo = new THREE.PlaneGeometry(sx, sz);
-    const mesh = new THREE.Mesh(geo, ceilingMat);
+    const geo = new THREE.PlaneGeometry(sx, sz, 4, 4);
+    const posAttr = geo.getAttribute('position');
+    const colors = new Float32Array(posAttr.count * 3);
+    const halfX = sx / 2, halfZ = sz / 2;
+    for (let i = 0; i < posAttr.count; i++) {
+      const lx = posAttr.getX(i);
+      const lz = posAttr.getY(i);
+      const edgeX = 1 - Math.pow(Math.abs(lx) / halfX, 3);
+      const edgeZ = 1 - Math.pow(Math.abs(lz) / halfZ, 3);
+      const ao = 0.7 + 0.3 * Math.min(edgeX, edgeZ);
+      colors[i * 3] = ao;
+      colors[i * 3 + 1] = ao;
+      colors[i * 3 + 2] = ao;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const aoMat = ceilingMat.clone();
+    aoMat.vertexColors = true;
+    const mesh = new THREE.Mesh(geo, aoMat);
     mesh.rotation.x = Math.PI / 2;
     mesh.position.set(cx, CEIL_H, cz);
     root.add(mesh);
@@ -769,11 +863,25 @@ function createKindergartenLevel(root: THREE.Group): Level {
 
   // Room lights — every room gets a flickering ceiling light
   const flickerLights: FlickerLight[] = [];
+  // Light fixture geometry (shared)
+  const fixtureGeo = new THREE.BoxGeometry(0.4, 0.03, 0.15);
+  const fixtureMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    roughness: 0.7,
+    metalness: 0.5,
+  });
+
   const addFlicker = (x: number, z: number, color: number, intensity: number) => {
     const light = new THREE.PointLight(color, intensity, 16, 1.5);
     light.position.set(x, CEIL_H - 0.3, z);
     light.castShadow = false;
     root.add(light);
+
+    // Fixture mesh at ceiling
+    const fixture = new THREE.Mesh(fixtureGeo, fixtureMat);
+    fixture.position.set(x, CEIL_H - 0.02, z);
+    root.add(fixture);
+
     flickerLights.push({ light, baseIntensity: intensity, phase: Math.random() * Math.PI * 2 });
     return light;
   };
@@ -884,6 +992,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // Enemy faint red light (so you can see it coming in the dark)
   const enemyLight = new THREE.PointLight(0xff2200, 1.2, 5, 2);
   enemyLight.position.set(0, 0, 0);
+  enemyLight.name = 'enemyLight';
   enemyRig.add(enemyLight);
 
   root.add(enemyRig);
@@ -1069,9 +1178,8 @@ function createKindergartenLevel(root: THREE.Group): Level {
   );
   pitFloor.position.set(0, 0.025, 0);
   pitGroup.add(pitFloor);
-  // Balls — fill the pit in a grid pattern, multiple layers
+  // Balls — fill the pit using InstancedMesh (8 draw calls instead of hundreds)
   const ballColors = [0xff3333, 0x33ff33, 0x3333ff, 0xffff33, 0xff33ff, 0x33ffff, 0xff8800, 0xff0088];
-  // Pre-create 8 shared materials instead of one per ball
   const ballMats = ballColors.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.1 }));
   const BALL_R = 0.11;
   const BALL_D = BALL_R * 2;
@@ -1079,20 +1187,32 @@ function createKindergartenLevel(root: THREE.Group): Level {
   const cols = Math.floor((PIT_W - 0.3) / BALL_D);
   const rows = Math.floor((PIT_D - 0.3) / BALL_D);
   const layers = Math.floor((PIT_H - 0.05) / BALL_D);
+
+  // Collect positions per color bucket
+  const ballBuckets: THREE.Matrix4[][] = ballMats.map(() => []);
+  const _tmpMatrix = new THREE.Matrix4();
   for (let ly = 0; ly < layers; ly++) {
     const offsetX = (ly % 2) * BALL_R;
     const offsetZ = (ly % 2) * BALL_R;
     for (let col = 0; col < cols; col++) {
       for (let row = 0; row < rows; row++) {
-        const ball = new THREE.Mesh(ballGeo, ballMats[Math.floor(Math.random() * ballMats.length)]);
-        ball.position.set(
+        const colorIdx = Math.floor(Math.random() * ballMats.length);
+        _tmpMatrix.makeTranslation(
           -((cols - 1) * BALL_D) / 2 + col * BALL_D + offsetX + (Math.random() - 0.5) * 0.03,
           BALL_R + ly * BALL_D + (Math.random() - 0.5) * 0.02,
           -((rows - 1) * BALL_D) / 2 + row * BALL_D + offsetZ + (Math.random() - 0.5) * 0.03,
         );
-        pitGroup.add(ball);
+        ballBuckets[colorIdx].push(_tmpMatrix.clone());
       }
     }
+  }
+  for (let i = 0; i < ballMats.length; i++) {
+    if (ballBuckets[i].length === 0) continue;
+    const instanced = new THREE.InstancedMesh(ballGeo, ballMats[i], ballBuckets[i].length);
+    for (let j = 0; j < ballBuckets[i].length; j++) {
+      instanced.setMatrixAt(j, ballBuckets[i][j]);
+    }
+    pitGroup.add(instanced);
   }
   pitGroup.position.set(playRoomCX, 0, playRoomCZ + 3);
   root.add(pitGroup);
@@ -1185,6 +1305,73 @@ function createKindergartenLevel(root: THREE.Group): Level {
   keyGroup.add(keyLight);
 
   root.add(keyGroup);
+
+  // ── Ground fog plane ──
+  const fogMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {
+      uTime: { value: 0 },
+    },
+    vertexShader: `
+      varying vec2 vWorldXZ;
+      varying float vWorldY;
+      void main() {
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldXZ = worldPos.xz;
+        vWorldY = worldPos.y;
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      varying vec2 vWorldXZ;
+      varying float vWorldY;
+
+      float noise(vec2 p) {
+        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+      }
+
+      float smoothNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = noise(i);
+        float b = noise(i + vec2(1.0, 0.0));
+        float c = noise(i + vec2(0.0, 1.0));
+        float d = noise(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }
+
+      float fbm(vec2 p) {
+        float v = 0.0;
+        v += smoothNoise(p * 1.0) * 0.5;
+        v += smoothNoise(p * 2.0 + 3.7) * 0.25;
+        v += smoothNoise(p * 4.0 + 7.1) * 0.125;
+        return v;
+      }
+
+      void main() {
+        vec2 uv = vWorldXZ * 0.3 + uTime * 0.02;
+        float n = fbm(uv);
+        float alpha = n * 0.12;
+        // Fade at edges
+        alpha *= smoothstep(0.5, 0.0, vWorldY);
+        gl_FragColor = vec4(0.6, 0.65, 0.7, alpha);
+      }
+    `,
+  });
+  const fogPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(X_MAX - X_MIN, Z_MAX - Z_MIN + 12),
+    fogMat
+  );
+  fogPlane.rotation.x = -Math.PI / 2;
+  fogPlane.position.set(0, 0.15, (Z_MIN + Z_MAX + 12) / 2);
+  fogPlane.renderOrder = 999;
+  root.add(fogPlane);
+  // Store reference for animation
+  (root as any)._fogMaterial = fogMat;
 
   // Patrol waypoints — enemy visits rooms in a loop
   const patrolPoints = [

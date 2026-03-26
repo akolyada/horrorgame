@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { Hud } from './ui/Hud';
 import { InputSystem } from './systems/InputSystem';
 import { PlayerController } from './systems/PlayerController';
@@ -169,6 +170,14 @@ export class Game {
           }
         `,
       };
+
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.4,   // strength — subtle
+        0.6,   // radius
+        0.85   // threshold — only bright emissives bloom
+      );
+      composer.addPass(bloomPass);
 
       const horrorPass = new ShaderPass(HorrorShader);
       composer.addPass(horrorPass);
@@ -499,7 +508,35 @@ export class Game {
         if (rightLeg) rightLeg.rotation.x = Math.sin(phase) * amplitude * 0.8;
         if (head) head.position.y = 1.6 + Math.abs(Math.sin(phase * 2)) * 0.02;
         if (torso) torso.rotation.x = Math.sin(phase) * 0.03;
+
+        // Pulsing emissive intensity based on AI state
+        if (torso && (torso as THREE.Mesh).isMesh) {
+          const mat = (torso as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat.emissive) {
+            if (state === 'chase') {
+              mat.emissiveIntensity = 2.5 + Math.sin(t * 8) * 1.0;
+            } else if (state === 'search') {
+              mat.emissiveIntensity = 1.8 + Math.sin(t * 4) * 0.5;
+            } else {
+              mat.emissiveIntensity = 1.0 + Math.sin(t * 2) * 0.3;
+            }
+          }
+        }
+
+        // Pulse enemy red light
+        const eLight = this.level!.enemyRig.getObjectByName('enemyLight') as THREE.PointLight | null;
+        if (eLight) {
+          eLight.intensity = state === 'chase'
+            ? 2.0 + Math.sin(t * 8) * 0.8
+            : 1.2 + Math.sin(t * 2) * 0.3;
+        }
       }
+    }
+
+    // Animate ground fog
+    if (this.level) {
+      const fogMat = (this.level.root as any)._fogMaterial as THREE.ShaderMaterial | undefined;
+      if (fogMat) fogMat.uniforms.uTime.value = t;
     }
 
     // Flicker room lights
@@ -519,8 +556,9 @@ export class Game {
 
     if (this.composer) {
       const passes = (this.composer as any).passes;
-      if (passes && passes.length > 1 && passes[1].uniforms) {
-        const u = passes[1].uniforms;
+      const horrorIdx = passes.length - 1;
+      if (passes && passes.length > 1 && passes[horrorIdx].uniforms) {
+        const u = passes[horrorIdx].uniforms;
         u.time.value = t;
         // Enemy proximity for shader effects
         if (this.level && this.player) {
