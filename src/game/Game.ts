@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -54,6 +55,19 @@ export class Game {
   private doorMessageCooldown = 0;
   private secretDoorOpen = false;
   private damageFlash = 0;
+  private enemyMixer: THREE.AnimationMixer | null = null;
+  private enemyModelLoaded = false;
+  private enemyMonsterMeshes: THREE.Mesh[] = [];
+  private enemyBodyRef: THREE.Object3D | null = null;
+  private enemyPartsCache: {
+    leftArm?: THREE.Object3D;
+    rightArm?: THREE.Object3D;
+    leftLeg?: THREE.Object3D;
+    rightLeg?: THREE.Object3D;
+    head?: THREE.Object3D;
+    torso?: THREE.Object3D;
+    eLight?: THREE.PointLight;
+  } = {};
 
   // Generation counter to cancel stale async work
 
@@ -67,13 +81,13 @@ export class Game {
   constructor(rootEl: HTMLElement) {
     this.rootEl = rootEl;
 
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !isMobile,
       powerPreference: 'high-performance',
     });
     this.renderer.setClearColor(0x000000, 1);
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = isMobile ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -95,7 +109,7 @@ export class Game {
     {
       const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       const renderTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
-        type: THREE.HalfFloatType,
+        type: isMobile ? THREE.UnsignedByteType : THREE.HalfFloatType,
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
       });
@@ -184,14 +198,15 @@ export class Game {
         `,
       };
 
-      const bloomScale = isMobile ? 0.5 : 1;
-      const bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth * bloomScale, window.innerHeight * bloomScale),
-        0.2,   // strength — very subtle
-        0.4,   // radius
-        1.2    // threshold — only very bright things bloom
-      );
-      composer.addPass(bloomPass);
+      if (!isMobile) {
+        const bloomPass = new UnrealBloomPass(
+          new THREE.Vector2(window.innerWidth, window.innerHeight),
+          0.2,   // strength — very subtle
+          0.4,   // radius
+          1.2    // threshold — only very bright things bloom
+        );
+        composer.addPass(bloomPass);
+      }
 
       const horrorPass = new ShaderPass(HorrorShader);
       composer.addPass(horrorPass);
@@ -343,6 +358,20 @@ export class Game {
       obstacles: this.level.obstacles,
     });
 
+    // Cache enemy part references to avoid per-frame getObjectByName
+    this.enemyBodyRef = this.level.enemyRig.getObjectByName('enemyBody') ?? null;
+    if (this.enemyBodyRef) {
+      this.enemyPartsCache = {
+        leftArm: this.enemyBodyRef.getObjectByName('leftArmPivot'),
+        rightArm: this.enemyBodyRef.getObjectByName('rightArmPivot'),
+        leftLeg: this.enemyBodyRef.getObjectByName('leftLegPivot'),
+        rightLeg: this.enemyBodyRef.getObjectByName('rightLegPivot'),
+        head: this.enemyBodyRef.getObjectByName('enemyHead'),
+        torso: this.enemyBodyRef.getObjectByName('enemyTorso'),
+        eLight: this.level.enemyRig.getObjectByName('enemyLight') as THREE.PointLight | undefined,
+      };
+    }
+
     this.enemy = new EnemyController({
       rig: this.level.enemyRig,
       target: () => this.player?.getPosition() ?? new THREE.Vector3(),
@@ -388,9 +417,99 @@ export class Game {
     this.inventory.preRenderThumbnail('gun', this.level.gunObj);
     this.input.setEnabled(true);
     this.setState('Playing');
+
+    // Load monster GLB model asynchronously (non-blocking)
+    this.enemyMixer = null;
+    this.enemyModelLoaded = false;
+    this.loadMonsterModel();
+  }
+
+  private async loadMonsterModel() {
+    if (!this.level) return;
+    const levelRef = this.level;
+
+    try {
+      const loader = new GLTFLoader();
+      const gltf = await loader.loadAsync('./assets/Meshy_AI_Baby_biped_Animation_Unsteady_Walk_withSkin.glb');
+      const model = gltf.scene;
+
+      // Check the game is still running with this level
+      if (this.level !== levelRef || this.state !== 'Playing') return;
+
+      // Remove the procedural enemy body
+      const enemyBody = levelRef.enemyRig.getObjectByName('enemyBody');
+      if (enemyBody) levelRef.enemyRig.remove(enemyBody);
+
+      // Set up the model — rotate 180° so it faces forward
+      model.name = 'loadedMonster';
+      model.rotation.y = Math.PI;
+      model.position.y = -levelRef.playerHeight;
+
+      // Darken and add horror emissive
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          const mat = mesh.material as THREE.MeshStandardMaterial;
+          if (mat && mat.color) {
+            mesh.material = mat.clone();
+            const m = mesh.material as THREE.MeshStandardMaterial;
+            m.color.multiplyScalar(0.35);
+            m.emissive = new THREE.Color(0x200000);
+            m.emissiveIntensity = 1.5;
+          }
+        }
+      });
+
+      // Auto-scale: fit model to ~1.6 units tall
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const modelHeight = box.max.y - box.min.y;
+      const targetHeight = 1.6;
+      if (modelHeight > 0.01) {
+        const s = targetHeight / modelHeight;
+        model.scale.setScalar(s);
+      }
+
+      // Ground the model
+      model.updateMatrixWorld(true);
+      const boxAfter = new THREE.Box3().setFromObject(model);
+      model.position.y += (-levelRef.playerHeight) - boxAfter.min.y;
+
+      levelRef.enemyRig.add(model);
+
+      // Set up animation mixer
+      if (gltf.animations.length > 0) {
+        this.enemyMixer = new THREE.AnimationMixer(model);
+        const clip = gltf.animations[0]; // walk animation
+        const action = this.enemyMixer.clipAction(clip);
+        action.play();
+      }
+
+      // Cache mesh references for per-frame emissive updates (avoid traverse)
+      this.enemyMonsterMeshes = [];
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) this.enemyMonsterMeshes.push(child as THREE.Mesh);
+      });
+
+      this.enemyModelLoaded = true;
+      this.enemyBodyRef = null; // procedural body removed
+      this.renderer.compile(this.scene, this.camera);
+    } catch (e) {
+      console.warn('Failed to load monster model, keeping procedural body', e);
+    }
   }
 
   private disposeLevel(level: Level) {
+    if (this.enemyMixer) {
+      this.enemyMixer.stopAllAction();
+      this.enemyMixer = null;
+    }
+    this.enemyModelLoaded = false;
+    this.enemyMonsterMeshes = [];
+    this.enemyBodyRef = null;
+    this.enemyPartsCache = {};
     this.scene.remove(level.root);
     level.root.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
@@ -602,50 +721,61 @@ export class Game {
       this.input.update(dt);
     }
 
-    // Enemy procedural animation — look up parts by name
+    // Enemy animation
     if (this.level) {
-      const body = this.level.enemyRig.getObjectByName('enemyBody');
-      if (body) {
-        const state = this.enemy?.getState() ?? 'patrol';
+      const state = this.enemy?.getState() ?? 'patrol';
+
+      // GLB model animation (AnimationMixer)
+      if (this.enemyMixer) {
+        const timeScale = state === 'chase' ? 2.0 : state === 'search' ? 1.3 : 0.8;
+        this.enemyMixer.timeScale = timeScale;
+        this.enemyMixer.update(dt);
+
+        // Pulse emissive on loaded model (cached mesh list, no traverse)
+        const emissiveVal = state === 'chase'
+          ? 2.5 + Math.sin(t * 8) * 1.0
+          : state === 'search'
+            ? 1.8 + Math.sin(t * 4) * 0.5
+            : 1.0 + Math.sin(t * 2) * 0.3;
+        for (const mesh of this.enemyMonsterMeshes) {
+          const mat = mesh.material as THREE.MeshStandardMaterial;
+          if (mat.emissive) mat.emissiveIntensity = emissiveVal;
+        }
+      }
+
+      // Procedural animation fallback (cached refs, if GLB not loaded)
+      if (this.enemyBodyRef) {
         const speed = state === 'chase' ? 8 : state === 'search' ? 5 : 3;
         const amplitude = state === 'chase' ? 0.6 : state === 'search' ? 0.4 : 0.25;
         const phase = t * speed;
+        const p = this.enemyPartsCache;
 
-        const leftArm = body.getObjectByName('leftArmPivot');
-        const rightArm = body.getObjectByName('rightArmPivot');
-        const leftLeg = body.getObjectByName('leftLegPivot');
-        const rightLeg = body.getObjectByName('rightLegPivot');
-        const head = body.getObjectByName('enemyHead');
-        const torso = body.getObjectByName('enemyTorso');
-
-        if (leftArm) leftArm.rotation.x = Math.sin(phase) * amplitude;
-        if (rightArm) rightArm.rotation.x = -Math.sin(phase) * amplitude;
-        if (leftLeg) leftLeg.rotation.x = -Math.sin(phase) * amplitude * 0.8;
-        if (rightLeg) rightLeg.rotation.x = Math.sin(phase) * amplitude * 0.8;
-        if (head) head.position.y = 1.6 + Math.abs(Math.sin(phase * 2)) * 0.02;
-        if (torso) torso.rotation.x = Math.sin(phase) * 0.03;
+        if (p.leftArm) p.leftArm.rotation.x = Math.sin(phase) * amplitude;
+        if (p.rightArm) p.rightArm.rotation.x = -Math.sin(phase) * amplitude;
+        if (p.leftLeg) p.leftLeg.rotation.x = -Math.sin(phase) * amplitude * 0.8;
+        if (p.rightLeg) p.rightLeg.rotation.x = Math.sin(phase) * amplitude * 0.8;
+        if (p.head) p.head.position.y = 1.6 + Math.abs(Math.sin(phase * 2)) * 0.02;
+        if (p.torso) p.torso.rotation.x = Math.sin(phase) * 0.03;
 
         // Pulsing emissive intensity based on AI state
-        if (torso && (torso as THREE.Mesh).isMesh) {
-          const mat = (torso as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (p.torso && (p.torso as THREE.Mesh).isMesh) {
+          const mat = (p.torso as THREE.Mesh).material as THREE.MeshStandardMaterial;
           if (mat.emissive) {
-            if (state === 'chase') {
-              mat.emissiveIntensity = 2.5 + Math.sin(t * 8) * 1.0;
-            } else if (state === 'search') {
-              mat.emissiveIntensity = 1.8 + Math.sin(t * 4) * 0.5;
-            } else {
-              mat.emissiveIntensity = 1.0 + Math.sin(t * 2) * 0.3;
-            }
+            mat.emissiveIntensity = state === 'chase'
+              ? 2.5 + Math.sin(t * 8) * 1.0
+              : state === 'search'
+                ? 1.8 + Math.sin(t * 4) * 0.5
+                : 1.0 + Math.sin(t * 2) * 0.3;
           }
         }
+      }
 
-        // Pulse enemy red light
-        const eLight = this.level!.enemyRig.getObjectByName('enemyLight') as THREE.PointLight | null;
-        if (eLight) {
-          eLight.intensity = state === 'chase'
-            ? 2.0 + Math.sin(t * 8) * 0.8
-            : 1.2 + Math.sin(t * 2) * 0.3;
-        }
+      // Pulse enemy red light (cached ref)
+      const eLight = this.enemyPartsCache.eLight;
+      if (eLight) {
+        eLight.intensity = state === 'chase'
+          ? 2.0 + Math.sin(t * 8) * 0.8
+          : 1.2 + Math.sin(t * 2) * 0.3;
       }
     }
 

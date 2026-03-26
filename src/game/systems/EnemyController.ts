@@ -238,7 +238,7 @@ export class EnemyController {
     const face = target.clone().sub(this.rig.position);
     face.y = 0;
     if (face.lengthSq() > 1e-6) {
-      this.rig.rotation.y = Math.atan2(face.x, -face.z);
+      this.rig.rotation.y = Math.atan2(-face.x, -face.z);
     }
   }
 

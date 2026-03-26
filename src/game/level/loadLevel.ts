@@ -581,8 +581,15 @@ function createKindergartenLevel(root: THREE.Group): Level {
   addWall(0, WY, Z_MIN, X_MAX - X_MIN, WH, WALL_T);
   // South wall — west portion only (east side opens into Велика Ігрова via Комірка)
   addWall((X_MIN + CORR_HALF) / 2, WY, Z_MAX, CORR_HALF - X_MIN, WH, WALL_T);
-  // West wall (X = X_MIN)
-  addWall(X_MIN, WY, 0, WALL_T, WH, Z_MAX - Z_MIN);
+  // West wall (X = X_MIN) — with gap for passage to hidden alcove
+  const westPassageZ = -1;  // center of passage (where green drawing was)
+  const westPassageGap = 1.4;
+  // North segment: Z_MIN to gap start
+  const wNorthLen = (westPassageZ - westPassageGap / 2) - Z_MIN;
+  addWall(X_MIN, WY, Z_MIN + wNorthLen / 2, WALL_T, WH, wNorthLen);
+  // South segment: gap end to Z_MAX
+  const wSouthLen = Z_MAX - (westPassageZ + westPassageGap / 2);
+  addWall(X_MIN, WY, Z_MAX - wSouthLen / 2, WALL_T, WH, wSouthLen);
   // East wall (X = X_MAX) — with gap for secret room door in cafeteria area
   const secretDoorZ = 0; // center of cafeteria
   const secretGap = 1.4;
@@ -861,7 +868,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
 
   // Children's drawings on walls (colored rectangles — abstract representation)
   addWallDrawing(X_MIN + 0.15, 1.2, -7, 1.0, 0.7, 'x', 0xff6644); // orange drawing in nap room
-  addWallDrawing(X_MIN + 0.15, 1.0, -1, 0.8, 0.6, 'x', 0x44aa66); // green drawing in playroom
+  // (green drawing removed — passage here now)
   addWallDrawing(X_MIN + 0.15, 1.3, 0.5, 1.2, 0.5, 'x', 0x4466ff); // blue drawing
   addWallDrawing(X_MAX - 0.15, 1.1, -6.5, 0.9, 0.7, 'x', 0xffcc22); // yellow drawing in office
   addWallDrawing(X_MAX - 0.15, 1.2, 0, 0.7, 0.5, 'x', 0xff4488); // pink in cafeteria
@@ -887,8 +894,9 @@ function createKindergartenLevel(root: THREE.Group): Level {
     metalness: 0.5,
   });
 
+  const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const addFlicker = (x: number, z: number, color: number, intensity: number) => {
-    const light = new THREE.PointLight(color, intensity * 25, 18, 1.2);
+    const light = new THREE.PointLight(color, intensity * 25, isMobileDevice ? 10 : 18, isMobileDevice ? 2 : 1.2);
     light.position.set(x, CEIL_H - 0.3, z);
     light.castShadow = false;
     root.add(light);
@@ -1432,6 +1440,226 @@ function createKindergartenLevel(root: THREE.Group): Level {
   gunGroup.position.copy(gunPos);
   gunGroup.rotation.y = 0.5;
   root.add(gunGroup);
+
+  // ═══════════════════════════════════════════════════════════
+  //  WEST HALL — large room beyond west wall with generator & houses
+  // ═══════════════════════════════════════════════════════════
+
+  const HALL_X_MIN = X_MIN - 30;
+  const HALL_X_MAX = X_MIN;
+  const HALL_Z_MIN = -14;
+  const HALL_Z_MAX = 14;
+  const hallCX = (HALL_X_MIN + HALL_X_MAX) / 2;
+  const hallCZ = (HALL_Z_MIN + HALL_Z_MAX) / 2;
+  const hallW = HALL_X_MAX - HALL_X_MIN;
+  const hallD = HALL_Z_MAX - HALL_Z_MIN;
+
+  addFloor(hallCX, hallCZ, hallW, hallD);
+  addCeiling(hallCX, hallCZ, hallW, hallD);
+
+  // Walls
+  addWall(HALL_X_MIN, WY, hallCZ, WALL_T, WH, hallD);   // west wall
+  addWall(hallCX, WY, HALL_Z_MIN, hallW, WH, WALL_T);   // north wall
+  addWall(hallCX, WY, HALL_Z_MAX, hallW, WH, WALL_T);   // south wall
+  // East wall segments (gap already made in main west wall above)
+  const awNorthLen = (westPassageZ - westPassageGap / 2) - HALL_Z_MIN;
+  if (awNorthLen > 0.5) addWall(HALL_X_MAX, WY, HALL_Z_MIN + awNorthLen / 2, WALL_T, WH, awNorthLen);
+  const awSouthLen = HALL_Z_MAX - (westPassageZ + westPassageGap / 2);
+  if (awSouthLen > 0.5) addWall(HALL_X_MAX, WY, HALL_Z_MAX - awSouthLen / 2, WALL_T, WH, awSouthLen);
+
+  roomCenters.set('Генераторна', new THREE.Vector3(hallCX, 0, hallCZ));
+
+  // Lighting — industrial dim
+  addFlicker(hallCX, hallCZ - 6, 0xff6633, 2.0);
+  addFlicker(hallCX, hallCZ + 6, 0xff6633, 2.0);
+  addFlicker(hallCX - 8, hallCZ, 0xffaa44, 1.5);
+  addFlicker(hallCX + 5, hallCZ, 0xff4422, 1.8);
+
+  // Debris
+  addDebris(hallCX, hallCZ, 12, 25);
+
+  // ── GENERATOR (large industrial machine, center-left) ──
+  const genMat = new THREE.MeshStandardMaterial({
+    color: 0x3a4a3a,
+    roughness: 0.7,
+    metalness: 0.5,
+  });
+  const genMatDark = new THREE.MeshStandardMaterial({
+    color: 0x2a2a2e,
+    roughness: 0.6,
+    metalness: 0.6,
+  });
+  const genAccent = new THREE.MeshStandardMaterial({
+    color: 0x886633,
+    roughness: 0.5,
+    metalness: 0.7,
+  });
+
+  const genGroup = new THREE.Group();
+  genGroup.position.set(hallCX - 4, 0, hallCZ);
+
+  // Main body — large box
+  const genBody = new THREE.Mesh(new THREE.BoxGeometry(4, 2.0, 2.5), genMat);
+  genBody.position.y = 1.0;
+  genBody.castShadow = true;
+  genBody.receiveShadow = true;
+  genGroup.add(genBody);
+
+  // Engine block on top
+  const engineBlock = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.8, 1.8), genMatDark);
+  engineBlock.position.set(0, 2.4, 0);
+  engineBlock.castShadow = true;
+  genGroup.add(engineBlock);
+
+  // Cylinders (exhaust pipes)
+  const pipeMat = genAccent;
+  for (const pz of [-0.6, 0.6]) {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1.5, 8), pipeMat);
+    pipe.position.set(-0.8, 2.55, pz);
+    pipe.castShadow = true;
+    genGroup.add(pipe);
+  }
+
+  // Fuel tank (cylinder on the side)
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 2.0, 12), genMatDark);
+  tank.position.set(2.4, 1.0, 0);
+  tank.rotation.z = Math.PI / 2;
+  tank.castShadow = true;
+  genGroup.add(tank);
+
+  // Control panel
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.0, 0.3), genMatDark);
+  panel.position.set(-2.3, 0.8, 1.0);
+  panel.castShadow = true;
+  genGroup.add(panel);
+  // Panel lights (small emissive cubes)
+  const panelLightMat = new THREE.MeshStandardMaterial({
+    color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 2.0,
+  });
+  const panelLightGreen = new THREE.MeshStandardMaterial({
+    color: 0x00ff00, emissive: 0x00ff00, emissiveIntensity: 2.0,
+  });
+  for (let i = 0; i < 3; i++) {
+    const light = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.06, 0.05),
+      i === 1 ? panelLightGreen : panelLightMat,
+    );
+    light.position.set(-2.3 + (i - 1) * 0.12, 1.1, 1.17);
+    genGroup.add(light);
+  }
+
+  // Base/feet
+  for (const [fx, fz] of [[-1.5, -1.0], [1.5, -1.0], [-1.5, 1.0], [1.5, 1.0]]) {
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.4), genAccent);
+    foot.position.set(fx, 0.075, fz);
+    genGroup.add(foot);
+  }
+
+  root.add(genGroup);
+  // Generator collision box
+  obstacles.push(makeBoxObstacle(
+    new THREE.Vector3(hallCX - 4 - 2.8, 0, hallCZ - 1.5),
+    new THREE.Vector3(hallCX - 4 + 2.8, 2.8, hallCZ + 1.5),
+  ));
+
+  // ── HOUSE 1 (north side of hall) ──
+  const houseMat = new THREE.MeshStandardMaterial({
+    color: 0x7a6b55, roughness: 0.9, metalness: 0.0,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: 0x8b3a3a, roughness: 0.85, metalness: 0.05,
+  });
+  const houseDoorMat = new THREE.MeshStandardMaterial({
+    color: 0x4a3520, roughness: 0.9, metalness: 0.0,
+  });
+  const houseWindowMat = new THREE.MeshStandardMaterial({
+    color: 0x334455, roughness: 0.3, metalness: 0.1,
+    emissive: 0x112233, emissiveIntensity: 0.5,
+  });
+
+  const buildHouse = (hx: number, hz: number, rotY: number) => {
+    const house = new THREE.Group();
+    const houseW = 5, houseD = 4, wallH = 2.2;
+
+    // Walls (4 sides with cutouts represented as full boxes)
+    // Front wall
+    const frontWall = new THREE.Mesh(new THREE.BoxGeometry(houseW, wallH, WALL_T), houseMat);
+    frontWall.position.set(0, wallH / 2, -houseD / 2);
+    frontWall.castShadow = true;
+    frontWall.receiveShadow = true;
+    house.add(frontWall);
+
+    // Back wall
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(houseW, wallH, WALL_T), houseMat);
+    backWall.position.set(0, wallH / 2, houseD / 2);
+    backWall.castShadow = true;
+    backWall.receiveShadow = true;
+    house.add(backWall);
+
+    // Left wall
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, wallH, houseD), houseMat);
+    leftWall.position.set(-houseW / 2, wallH / 2, 0);
+    leftWall.castShadow = true;
+    leftWall.receiveShadow = true;
+    house.add(leftWall);
+
+    // Right wall
+    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, wallH, houseD), houseMat);
+    rightWall.position.set(houseW / 2, wallH / 2, 0);
+    rightWall.castShadow = true;
+    rightWall.receiveShadow = true;
+    house.add(rightWall);
+
+    // Roof (triangular prism using ExtrudeGeometry)
+    const roofHeight = 1.2;
+    const roofOverhang = 0.4;
+    const roofShape = new THREE.Shape();
+    roofShape.moveTo(-(houseW / 2 + roofOverhang), 0);
+    roofShape.lineTo(0, roofHeight);
+    roofShape.lineTo(houseW / 2 + roofOverhang, 0);
+    roofShape.lineTo(-(houseW / 2 + roofOverhang), 0);
+    const roofGeo = new THREE.ExtrudeGeometry(roofShape, {
+      depth: houseD + roofOverhang * 2,
+      bevelEnabled: false,
+    });
+    const roof = new THREE.Mesh(roofGeo, roofMat);
+    roof.position.set(0, wallH, -(houseD / 2 + roofOverhang));
+    roof.castShadow = true;
+    roof.receiveShadow = true;
+    house.add(roof);
+
+    // Door (on front wall)
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.05), houseDoorMat);
+    door.position.set(-0.8, 0.8, -houseD / 2 - 0.05);
+    house.add(door);
+
+    // Windows (front)
+    for (const wx of [0.8, 1.8]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.05), houseWindowMat);
+      win.position.set(wx, 1.3, -houseD / 2 - 0.05);
+      house.add(win);
+    }
+
+    // Window on side
+    const sideWin = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 0.6), houseWindowMat);
+    sideWin.position.set(houseW / 2 + 0.05, 1.3, 0);
+    house.add(sideWin);
+
+    house.position.set(hx, 0, hz);
+    house.rotation.y = rotY;
+    root.add(house);
+
+    // Collision box for the house
+    const half = new THREE.Vector3(houseW / 2 + 0.1, wallH + roofHeight, houseD / 2 + 0.1);
+    obstacles.push(makeBoxObstacle(
+      new THREE.Vector3(hx - half.x, 0, hz - half.z),
+      new THREE.Vector3(hx + half.x, half.y, hz + half.z),
+    ));
+  };
+
+  // Place two large houses
+  buildHouse(hallCX + 6, hallCZ - 6, 0.2);          // House 1 — north-east area
+  buildHouse(hallCX + 4, hallCZ + 6, -0.3);          // House 2 — south-east area
 
   // ═══════════════════════════════════════════════════════════
   //  SECRET ROOM — beyond cafeteria east wall, opened by target
