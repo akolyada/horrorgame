@@ -57,9 +57,10 @@ export class WatchSystem {
     this.getAudioCtx = config.getAudioCtx;
 
     // ── Flashlight setup ──
-    this.flashlight = new THREE.SpotLight(0xeeddaa, 5.0, 12, Math.PI * 0.17, 0.5, 1.5);
+    this.flashlight = new THREE.SpotLight(0xeeddaa, 7.0, 20, Math.PI * 0.2, 0.4, 1.2);
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     this.flashlight.castShadow = true;
-    const shadowRes = (navigator.hardwareConcurrency ?? 4) >= 4 ? 1024 : 512;
+    const shadowRes = isMobile ? 512 : 1024;
     this.flashlight.shadow.mapSize.width = shadowRes;
     this.flashlight.shadow.mapSize.height = shadowRes;
     this.flashlight.shadow.camera.near = 0.1;

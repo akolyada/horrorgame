@@ -136,24 +136,42 @@ export class Inventory {
     this.el.style.display = 'none';
   }
 
+  /** Pre-render a 3D thumbnail before the object is picked up (avoids stutter) */
+  public preRenderThumbnail(id: string, object3D: THREE.Object3D) {
+    if (this.thumbnails.has(id)) return;
+    try {
+      const url = renderThumbnail(object3D);
+      if (url) this.thumbnails.set(id, url);
+    } catch (e) {
+      console.warn('Pre-render thumbnail failed:', e);
+    }
+  }
+
   public addItem(item: InventoryItem) {
     if (this.items.length >= this.maxSlots) return;
     if (this.items.find(i => i.id === item.id)) return;
-
-    // Generate thumbnail from 3D object if provided
-    if (item.object3D && !this.thumbnails.has(item.id)) {
-      try {
-        const url = renderThumbnail(item.object3D);
-        if (url) this.thumbnails.set(item.id, url);
-      } catch (e) {
-        console.warn('Inventory thumbnail render failed:', e);
-      }
-    }
 
     this.items.push(item);
     this.render();
     if (this.items.length === 1) {
       this.selectSlot(0);
+    }
+
+    // Defer thumbnail rendering to avoid frame stutter
+    if (item.object3D && !this.thumbnails.has(item.id)) {
+      const obj = item.object3D;
+      const id = item.id;
+      requestAnimationFrame(() => {
+        try {
+          const url = renderThumbnail(obj);
+          if (url) {
+            this.thumbnails.set(id, url);
+            this.render();
+          }
+        } catch (e) {
+          console.warn('Inventory thumbnail render failed:', e);
+        }
+      });
     }
   }
 

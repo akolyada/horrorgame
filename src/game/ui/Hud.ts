@@ -21,10 +21,9 @@ export class Hud {
   private interactPrompt: HTMLDivElement;
   private crosshair: HTMLDivElement;
 
-  private onStartCb: ((level: 'default' | 'kenney') => void) | null = null;
+  private onStartCb: (() => void) | null = null;
   private onRestartCb: Callback | null = null;
   private onSkipCb: Callback | null = null;
-  private selectedLevel: 'default' | 'kenney' = 'default';
 
   constructor(rootEl: HTMLElement) {
     this.rootEl = rootEl;
@@ -44,40 +43,11 @@ export class Hud {
       </div>
     `;
 
-    // Level selector
-    const levelSelect = document.createElement('div');
-    levelSelect.style.marginBottom = '12px';
-    levelSelect.style.display = 'flex';
-    levelSelect.style.gap = '8px';
-    levelSelect.style.justifyContent = 'center';
-
-    const btnDefault = document.createElement('button');
-    btnDefault.textContent = 'Садок';
-    btnDefault.className = 'level-btn active';
-    const btnKenney = document.createElement('button');
-    btnKenney.textContent = 'Kenney';
-    btnKenney.className = 'level-btn';
-
-    btnDefault.addEventListener('click', () => {
-      this.selectedLevel = 'default';
-      btnDefault.classList.add('active');
-      btnKenney.classList.remove('active');
-    });
-    btnKenney.addEventListener('click', () => {
-      this.selectedLevel = 'kenney';
-      btnKenney.classList.add('active');
-      btnDefault.classList.remove('active');
-    });
-
-    levelSelect.appendChild(btnDefault);
-    levelSelect.appendChild(btnKenney);
-    this.mainPanel.appendChild(levelSelect);
-
     this.startBtn = document.createElement('button');
     this.startBtn.textContent = 'Грати';
     this.startBtn.addEventListener('pointerup', (e) => {
       e.preventDefault();
-      this.onStartCb?.(this.selectedLevel);
+      this.onStartCb?.();
     });
     this.mainPanel.appendChild(this.startBtn);
 
@@ -179,7 +149,7 @@ export class Hud {
     this.rootEl.appendChild(hudRoot);
   }
 
-  public onStart(cb: (level: 'default' | 'kenney') => void) {
+  public onStart(cb: () => void) {
     this.onStartCb = cb;
   }
 
@@ -248,14 +218,20 @@ export class Hud {
   }
 
   public showInteractPrompt(text: string) {
-    this.interactPrompt.textContent = text;
-    this.interactPrompt.style.opacity = '1';
-    this.crosshair.classList.add('active');
+    if (this.interactPrompt.textContent !== text) {
+      this.interactPrompt.textContent = text;
+    }
+    if (this.interactPrompt.style.opacity !== '1') {
+      this.interactPrompt.style.opacity = '1';
+      this.crosshair.classList.add('active');
+    }
   }
 
   public hideInteractPrompt() {
-    this.interactPrompt.style.opacity = '0';
-    this.crosshair.classList.remove('active');
+    if (this.interactPrompt.style.opacity !== '0') {
+      this.interactPrompt.style.opacity = '0';
+      this.crosshair.classList.remove('active');
+    }
   }
 
   public showMessage(text: string, durationMs: number) {

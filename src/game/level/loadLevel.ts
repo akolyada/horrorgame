@@ -645,13 +645,13 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // Storage room entrance — locked door placed here (see LOCKED DOOR section below)
 
   // Block 2: Corridor north end — decorative rubble only, exit must be reachable
-  addRubble(-0.8, Z_MIN + 2.5, 1.5, 10, false);
+  addRubble(-0.8, Z_MIN + 2.5, 1.5, 10, true);
 
   // Block 3: Between nap room and playroom (west divider Z_DIV1) — rubble on both sides
-  addRubble(westCenterX, Z_DIV1, 2.5, 12, false); // decorative only, wall is already solid
+  addRubble(westCenterX, Z_DIV1, 2.5, 12, true);
 
   // Corridor rubble pile (mid section, partial blockage — can squeeze past)
-  addRubble(-0.6, 0, 1.2, 8, false); // decorative, no collision — can walk through
+  addRubble(-0.6, 0, 1.2, 8, true);
 
   // ═══════════════════════════════════════════════════════════
   //  SCATTERED DEBRIS (atmosphere)
@@ -817,8 +817,8 @@ function createKindergartenLevel(root: THREE.Group): Level {
   ));
 
   // WC room — just some rubble and a broken sink shape
-  addRubble(westCenterX - 1, (Z_DIV2 + Z_MAX) / 2, 2, 6, false);
-  addRubble(westCenterX + 2, (Z_DIV2 + Z_MAX) / 2 + 1, 1.5, 4, false);
+  addRubble(westCenterX - 1, (Z_DIV2 + Z_MAX) / 2, 2, 6, true);
+  addRubble(westCenterX + 2, (Z_DIV2 + Z_MAX) / 2 + 1, 1.5, 4, true);
 
   // ═══════════════════════════════════════════════════════════
   //  DAMAGED CEILING SECTIONS (holes showing darkness above)
@@ -870,11 +870,11 @@ function createKindergartenLevel(root: THREE.Group): Level {
   //  LIGHTING (minimal — mostly dark, player has flashlight)
   // ═══════════════════════════════════════════════════════════
 
-  // Ambient light — dim for horror atmosphere
-  const ambient = new THREE.AmbientLight(0x333344, 1.8);
+  // Ambient light — enough to see walls/furniture, flashlight adds drama
+  const ambient = new THREE.AmbientLight(0x556666, 4.0);
   root.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0x445566, 0x222233, 1.0);
+  const hemi = new THREE.HemisphereLight(0x667788, 0x444455, 2.5);
   root.add(hemi);
 
   // Room lights — every room gets a flickering ceiling light
@@ -888,7 +888,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   });
 
   const addFlicker = (x: number, z: number, color: number, intensity: number) => {
-    const light = new THREE.PointLight(color, intensity, 16, 1.5);
+    const light = new THREE.PointLight(color, intensity * 25, 18, 1.2);
     light.position.set(x, CEIL_H - 0.3, z);
     light.castShadow = false;
     root.add(light);
@@ -898,7 +898,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
     fixture.position.set(x, CEIL_H - 0.02, z);
     root.add(fixture);
 
-    flickerLights.push({ light, baseIntensity: intensity, phase: Math.random() * Math.PI * 2 });
+    flickerLights.push({ light, baseIntensity: intensity * 25, phase: Math.random() * Math.PI * 2 });
     return light;
   };
 
@@ -1470,7 +1470,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
 
   // Some rubble/debris inside
   addRubble(secretCX + 3, secretCZ - 2, 4, 8, true);
-  addRubble(secretCX - 5, secretCZ + 3, 3, 6, false);
+  addRubble(secretCX - 5, secretCZ + 3, 3, 6, true);
   addDebris(secretCX, secretCZ, 6, 10);
 
   // ── Secret door (blocks the gap in east wall) ──

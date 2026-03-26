@@ -65,33 +65,28 @@ export class PlayerController {
   }
 
   private resolveCollisions(pos: THREE.Vector3) {
-    // Very simple sphere-vs-AABB resolution: push the sphere out from any intersecting box.
-    // (Good enough for beginner levels with axis-aligned walls.)
+    // 2D circle-vs-AABB resolution on XZ plane (ignoring Y so furniture blocks the player
+    // even though the camera/sphere center is above most objects).
     for (let iter = 0; iter < 4; iter++) {
       let any = false;
       for (const box of this.obstacles) {
-        const closest = this.closestPointOnAabb(pos, box);
-        const delta = pos.clone().sub(closest);
-        const d2 = delta.lengthSq();
+        const cx = THREE.MathUtils.clamp(pos.x, box.min.x, box.max.x);
+        const cz = THREE.MathUtils.clamp(pos.z, box.min.z, box.max.z);
+        const dx = pos.x - cx;
+        const dz = pos.z - cz;
+        const d2 = dx * dx + dz * dz;
         if (d2 < this.radius * this.radius) {
           any = true;
           const d = Math.sqrt(Math.max(1e-9, d2));
-          // If center is exactly on the surface/inside, pick a stable push direction.
-          const pushDir = d > 1e-6 ? delta.multiplyScalar(1 / d) : new THREE.Vector3(0, 0, 1);
+          const pushX = d > 1e-6 ? dx / d : 0;
+          const pushZ = d > 1e-6 ? dz / d : 1;
           const penetration = this.radius - d;
-          pos.addScaledVector(pushDir, penetration + 1e-3);
+          pos.x += pushX * (penetration + 1e-3);
+          pos.z += pushZ * (penetration + 1e-3);
         }
       }
       if (!any) break;
     }
-  }
-
-  private closestPointOnAabb(p: THREE.Vector3, box: AABBObstacle) {
-    return new THREE.Vector3(
-      THREE.MathUtils.clamp(p.x, box.min.x, box.max.x),
-      THREE.MathUtils.clamp(p.y, box.min.y, box.max.y),
-      THREE.MathUtils.clamp(p.z, box.min.z, box.max.z),
-    );
   }
 }
 

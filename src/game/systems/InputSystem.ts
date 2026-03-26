@@ -65,15 +65,18 @@ export class InputSystem {
     });
     window.addEventListener('keyup', (e) => this.keyState.delete(e.code));
 
-    // Desktop mouse look (drag)
+    // Desktop mouse look (drag) — touch or right mouse button
     window.addEventListener('pointerdown', (e) => {
       if (!this.enabled) return;
       if (this.shouldIgnoreTarget(e.target as EventTarget | null)) return;
       if (this.isInJoystickArea(e.clientX, e.clientY)) return;
-      // Start look drag anywhere else.
+      // Touch: always look-drag. Mouse: only left button for look.
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       this.activeLookPointerId = e.pointerId;
       this.lastPointerPos = { x: e.clientX, y: e.clientY };
     });
+    // Prevent context menu on right-click (used for look)
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   public setEnabled(enabled: boolean) {

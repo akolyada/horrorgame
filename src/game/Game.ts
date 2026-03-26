@@ -9,7 +9,6 @@ import { PlayerController } from './systems/PlayerController';
 import { EnemyController } from './systems/EnemyController';
 import { WatchSystem } from './systems/WatchSystem';
 import { loadLevel, type Level } from './level/loadLevel';
-import { kitbashKenneyKindergarten } from './level/kitbashKenney';
 import { loadFurnitureForLevel, loadMonsterModel } from './level/modelLoader';
 import { AudioSystem } from './audio/AudioSystem';
 import { DustParticles } from './systems/DustParticles';
@@ -55,7 +54,6 @@ export class Game {
   private doorOpen = false;
   private doorMessageCooldown = 0;
   private secretDoorOpen = false;
-  private currentLevel: 'default' | 'kenney' = 'default';
   private damageFlash = 0;
 
   // Generation counter to cancel stale async work
@@ -76,16 +74,17 @@ export class Game {
       powerPreference: 'high-performance',
     });
     this.renderer.setClearColor(0x000000, 1);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = isMobile ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 2.2;
+    this.renderer.toneMappingExposure = 2.8;
     this.rootEl.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x080810, 0.04);
+    this.scene.fog = new THREE.FogExp2(0x080810, 0.025);
     this.scene.background = new THREE.Color(0x010102);
 
     this.camera = new THREE.PerspectiveCamera(75, 1, 0.05, 50);
@@ -95,16 +94,20 @@ export class Game {
     this.playerRig.add(this.playerYaw);
     this.scene.add(this.playerRig);
 
-    const deviceDpr = window.devicePixelRatio || 1;
-    const enablePost = deviceDpr <= 1.6;
-    if (enablePost) {
-      const composer = new EffectComposer(this.renderer);
+    {
+      const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      const renderTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
+        type: THREE.HalfFloatType,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+      });
+      const composer = new EffectComposer(this.renderer, renderTarget);
       composer.addPass(new RenderPass(this.scene, this.camera));
 
       const HorrorShader = {
         uniforms: {
           tDiffuse: { value: null },
-          darkness: { value: 0.85 },
+          darkness: { value: 0.35 },
           time: { value: 0 },
           enemyProximity: { value: 0 },
           damageFlash: { value: 0 },
@@ -135,8 +138,8 @@ export class Game {
             float distFromCenter = length(center);
 
             // Chromatic aberration — stronger at edges, amplified by enemy proximity
-            float caBase = 0.002;
-            float caStrength = caBase + enemyProximity * 0.006;
+            float caBase = 0.001;
+            float caStrength = caBase + enemyProximity * 0.003;
             vec2 caOffset = center * distFromCenter * caStrength;
             float r = texture2D(tDiffuse, vUv + caOffset).r;
             float g = texture2D(tDiffuse, vUv).g;
@@ -144,8 +147,8 @@ export class Game {
             vec3 color = vec3(r, g, b);
 
             // Scanline distortion when enemy is close
-            if (enemyProximity > 0.4) {
-              float scanline = sin(vUv.y * 300.0 + time * 10.0) * (enemyProximity - 0.4) * 0.015;
+            if (enemyProximity > 0.5) {
+              float scanline = sin(vUv.y * 200.0 + time * 8.0) * (enemyProximity - 0.5) * 0.006;
               vec2 distortedUv = vUv + vec2(scanline, 0.0);
               color = vec3(
                 texture2D(tDiffuse, distortedUv + caOffset).r,
@@ -156,16 +159,16 @@ export class Game {
 
             // Desaturation for muted horror palette
             float lum = dot(color, vec3(0.299, 0.587, 0.114));
-            color = mix(color, vec3(lum), 0.3);
+            color = mix(color, vec3(lum), 0.15);
 
             // Smooth blue/teal color grading in shadows
-            vec3 shadowTint = vec3(lum * 0.55, lum * 0.72, lum * 0.68);
-            float shadowMix = smoothstep(0.2, 0.0, lum) * 0.4;
+            vec3 shadowTint = vec3(lum * 0.65, lum * 0.78, lum * 0.74);
+            float shadowMix = smoothstep(0.15, 0.0, lum) * 0.25;
             color = mix(color, shadowTint, shadowMix);
 
-            // Vignette with tighter inner radius
-            float r2 = dot(center * 2.0, center * 2.0);
-            float vig = smoothstep(0.3, 1.8, r2);
+            // Vignette with softer falloff
+            float r2 = dot(center * 1.6, center * 1.6);
+            float vig = smoothstep(0.5, 2.0, r2);
             // Red vignette tint when enemy is near
             vec3 vigColor = mix(vec3(0.0), vec3(0.15, 0.0, 0.0), enemyProximity);
             color = mix(color, vigColor, vig * darkness);
@@ -183,11 +186,12 @@ export class Game {
         `,
       };
 
+      const bloomScale = isMobile ? 0.5 : 1;
       const bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth, window.innerHeight),
-        0.4,   // strength — subtle
-        0.6,   // radius
-        0.85   // threshold — only bright emissives bloom
+        new THREE.Vector2(window.innerWidth * bloomScale, window.innerHeight * bloomScale),
+        0.2,   // strength — very subtle
+        0.4,   // radius
+        1.2    // threshold — only very bright things bloom
       );
       composer.addPass(bloomPass);
 
@@ -220,13 +224,13 @@ export class Game {
       };
     };
 
-    // Interact on tap / 'E' key; Shoot on tap (when gun equipped + no interact target)
+    // Interact on tap / 'E' key; Shoot on touch tap (when gun equipped + no interact target)
     window.addEventListener('pointerup', (e) => {
       if (this.state !== 'Playing') return;
       if (e.target instanceof HTMLElement && (e.target.closest('.panel') || e.target.closest('button') || e.target.closest('.joystickBase'))) return;
       if (this.interactTarget) {
         this.interactRequested = true;
-      } else if (this.hasGun && this.inventory.getActiveItemId() === 'gun') {
+      } else if (e.pointerType === 'touch' && this.hasGun && this.inventory.getActiveItemId() === 'gun') {
         this.shootRequested = true;
         this.shootNdc = pointerToNdc(e);
       }
@@ -242,22 +246,23 @@ export class Game {
         this.inventory.clickSlot(slotKey - 1);
       }
     });
-    // Dedicated shoot on left mouse button — fires toward cursor
+    // Desktop: right mouse button fires gun
     window.addEventListener('mousedown', (e) => {
-      if (this.state !== 'Playing' || !this.hasGun || e.button !== 0 || this.inventory.getActiveItemId() !== 'gun') return;
+      if (this.state !== 'Playing' || !this.hasGun || e.button !== 2) return;
+      if (this.inventory.getActiveItemId() !== 'gun') return;
       if (e.target instanceof HTMLElement && (e.target.closest('.panel') || e.target.closest('button'))) return;
       this.shootRequested = true;
       this.shootNdc = pointerToNdc(e);
     });
 
-    this.hud.onStart((level) => {
-      this.startGame(level).catch((err) => {
+    this.hud.onStart(() => {
+      this.startGame().catch((err) => {
         console.error(err);
         this.hud.showError(err instanceof Error ? err.message : String(err));
       });
     });
     this.hud.onRestart(() => {
-      this.startGame(this.currentLevel).catch((err) => {
+      this.startGame().catch((err) => {
         console.error(err);
         this.hud.showError(err instanceof Error ? err.message : String(err));
       });
@@ -308,9 +313,7 @@ export class Game {
     }
   }
 
-  private async startGame(levelType: 'default' | 'kenney' = 'default') {
-    this.currentLevel = levelType;
-
+  private async startGame() {
     // Increment generation to invalidate any pending async work
     this.loadGeneration++;
     const gen = this.loadGeneration;
@@ -327,10 +330,6 @@ export class Game {
     this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
-
-    if (levelType === 'kenney') {
-      await kitbashKenneyKindergarten(this.level.root, this.level);
-    }
 
     // Load 3D models (async, non-blocking) with generation guard
     this.loadModels(gen);
@@ -376,6 +375,9 @@ export class Game {
 
     this.dust = new DustParticles(this.scene);
 
+    // Pre-compile all shaders to avoid stutter on first visibility change
+    this.renderer.compile(this.scene, this.camera);
+
     this.input.reset(this.level.playerSpawn);
     this.audio.startEncounter();
     this.audio.startMusic();
@@ -388,6 +390,10 @@ export class Game {
     this.hud.setKeyStatus(false);
     this.inventory.clear();
     this.inventory.show();
+
+    // Pre-render 3D thumbnails for inventory items (after clear, while objects are visible)
+    this.inventory.preRenderThumbnail('key', this.level.keyObj);
+    this.inventory.preRenderThumbnail('gun', this.level.gunObj);
     this.input.setEnabled(true);
     this.setState('Playing');
   }
@@ -450,6 +456,9 @@ export class Game {
         levelRef.enemyRig.add(monsterModel);
       }
     }
+
+    // Pre-compile shaders for newly loaded models
+    this.renderer.compile(this.scene, this.camera);
   }
 
   private onCaught() {
@@ -467,13 +476,14 @@ export class Game {
     const w = this.rootEl.clientWidth;
     const h = this.rootEl.clientHeight;
 
-    this.renderer.setSize(w, h, false);
+    this.renderer.setSize(w, h);
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
     this.composer?.setSize(w, h);
   }
 
   private frame() {
+    const frameStart = performance.now();
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
 
@@ -547,12 +557,14 @@ export class Game {
       // Process interaction
       if (this.interactRequested && this.interactTarget) {
         this.interactRequested = false;
+        const t0 = performance.now();
+        const what = this.interactTarget;
 
         if (this.interactTarget === 'gun') {
           this.hasGun = true;
           // Render thumbnail BEFORE hiding
-          this.inventory.addItem({ id: 'gun', name: 'Кулькова пушка', icon: '🔫', object3D: this.level.gunObj });
-          this.level.gunObj.visible = false;
+          this.inventory.addItem({ id: 'gun', name: 'Кулькова пушка', icon: '🔫' });
+          this.level.gunObj.position.y = -999;
           this.ballGun = new BallGun(this.level.root, this.camera, () => this.audio.getContext(), this.level.obstacles);
           this.inventory.selectItem('gun');
           this.hud.showMessage('Кулькова пушка!', 2000);
@@ -561,8 +573,8 @@ export class Game {
         } else if (this.interactTarget === 'key') {
           this.hasKey = true;
           // Render thumbnail BEFORE hiding
-          this.inventory.addItem({ id: 'key', name: 'Ключ', icon: '🔑', object3D: this.level.keyObj });
-          this.level.keyObj.visible = false;
+          this.inventory.addItem({ id: 'key', name: 'Ключ', icon: '🔑' });
+          this.level.keyObj.position.y = -999;
           this.hud.setKeyStatus(true);
           this.hud.showMessage('Ключ знайдено!', 2000);
           this.audio.playPickup();
@@ -571,13 +583,14 @@ export class Game {
           this.doorOpen = true;
           const idx = this.level.obstacles.indexOf(this.level.doorObstacle);
           if (idx !== -1) this.level.obstacles.splice(idx, 1);
-          this.level.doorObj.visible = false;
+          this.level.doorObj.position.y = -999;
           this.inventory.removeItem('key'); // key consumed
           this.hud.setKeyStatus(false);
           this.hud.showMessage('Двері відчинено!', 2000);
           this.audio.playDoorCreak();
           this.hud.hideInteractPrompt();
         }
+        console.log(`[interact:${what}] ${(performance.now() - t0).toFixed(1)}ms`);
       }
       this.interactRequested = false;
 
@@ -599,7 +612,7 @@ export class Game {
         if (!this.secretDoorOpen) {
           if (this.ballGun.checkHitEnemy(this.level.targetPos, 1.0)) {
             this.secretDoorOpen = true;
-            this.level.secretDoorObj.visible = false;
+            this.level.secretDoorObj.position.y = -999;
             const sIdx = this.level.obstacles.indexOf(this.level.secretDoorObstacle);
             if (sIdx !== -1) this.level.obstacles.splice(sIdx, 1);
             this.audio.playDoorCreak();
@@ -686,6 +699,9 @@ export class Game {
       }
     }
 
+    const logicMs = performance.now() - frameStart;
+    if (logicMs > 30) console.warn(`[slow logic] ${logicMs.toFixed(1)}ms`);
+
     // Animate ground fog
     if (this.level) {
       const fogMat = (this.level.root as any)._fogMaterial as THREE.ShaderMaterial | undefined;
@@ -700,7 +716,7 @@ export class Game {
         const med = Math.sin(now * 4.7 + fl.phase * 3) * 0.1;
         const fast = Math.sin(now * 17 + fl.phase * 7) * 0.08;
         const dip = Math.sin(now * 0.4 + fl.phase * 2) > 0.92 ? -0.5 : 0;
-        fl.light.intensity = fl.baseIntensity * Math.max(0.15, 1 + slow + med + fast + dip);
+        fl.light.intensity = fl.baseIntensity * Math.max(0.5, 1 + slow + med + fast + dip);
       }
     }
 
@@ -720,10 +736,16 @@ export class Game {
         }
         u.damageFlash.value = this.damageFlash;
       }
+      const r0 = performance.now();
       this.composer.render();
+      const renderMs = performance.now() - r0;
+      if (renderMs > 30) console.warn(`[slow render] ${renderMs.toFixed(1)}ms`);
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+
+    const frameDur = performance.now() - frameStart;
+    if (frameDur > 30) console.warn(`[slow frame] ${frameDur.toFixed(1)}ms (render logged above if slow)`);
 
     this.rafId = window.requestAnimationFrame(() => this.frame());
 

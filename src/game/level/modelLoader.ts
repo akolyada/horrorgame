@@ -39,11 +39,19 @@ function placeModel(
       const mat = mesh.material as THREE.MeshStandardMaterial;
       if (mat && mat.color) {
         mesh.material = mat.clone();
-        (mesh.material as THREE.MeshStandardMaterial).color.multiplyScalar(0.35);
+        (mesh.material as THREE.MeshStandardMaterial).color.multiplyScalar(0.55);
       }
     }
   });
   parent.add(model);
+
+  // Auto-ground: shift model so its bottom sits on the specified Y
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  if (!box.isEmpty()) {
+    model.position.y += pos.y - box.min.y;
+  }
+
   return model;
 }
 
@@ -54,9 +62,9 @@ function aabbFromObject(obj: THREE.Object3D): AABBObstacle {
 }
 
 // Furniture kit paths
-const FURN = '/assets/kenney_furniture-kit/Models/GLTF format';
+const FURN = './assets/kenney_furniture-kit/Models/GLTF_format';
 // Graveyard kit paths
-const GRAVE = '/assets/kenney_graveyard-kit/Models/GLB format';
+const GRAVE = './assets/kenney_graveyard-kit/Models/GLB_format';
 
 // ── Monster model ──
 
