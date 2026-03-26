@@ -9,7 +9,6 @@ import { PlayerController } from './systems/PlayerController';
 import { EnemyController } from './systems/EnemyController';
 import { WatchSystem } from './systems/WatchSystem';
 import { loadLevel, type Level } from './level/loadLevel';
-import { loadFurnitureForLevel, loadMonsterModel } from './level/modelLoader';
 import { AudioSystem } from './audio/AudioSystem';
 import { DustParticles } from './systems/DustParticles';
 import { BallGun } from './systems/BallGun';
@@ -57,7 +56,6 @@ export class Game {
   private damageFlash = 0;
 
   // Generation counter to cancel stale async work
-  private loadGeneration = 0;
 
   // Previous player position for speed calculation
   private prevPlayerPos = new THREE.Vector3();
@@ -314,10 +312,6 @@ export class Game {
   }
 
   private async startGame() {
-    // Increment generation to invalidate any pending async work
-    this.loadGeneration++;
-    const gen = this.loadGeneration;
-
     // Clean up previous level — dispose GPU resources
     if (this.level) {
       this.disposeLevel(this.level);
@@ -331,8 +325,6 @@ export class Game {
 
     this.level = loadLevel(this.scene);
 
-    // Load 3D models (async, non-blocking) with generation guard
-    this.loadModels(gen);
 
     this.playerRig.position.copy(this.level.spawn);
     this.playerRig.position.y = this.level.playerHeight;
@@ -417,48 +409,6 @@ export class Game {
         }
       }
     });
-  }
-
-  private async loadModels(gen: number) {
-    if (!this.level) return;
-    const levelRef = this.level;
-
-    await loadFurnitureForLevel(levelRef.root, levelRef.obstacles, levelRef.roomCenters);
-
-    // Check if game was restarted during loading
-    if (this.loadGeneration !== gen) return;
-
-    const monsterModel = await loadMonsterModel();
-
-    if (this.loadGeneration !== gen) return;
-
-    if (monsterModel.children.length > 0) {
-      const enemyBody = levelRef.enemyRig.getObjectByName('enemyBody');
-      if (enemyBody) {
-        monsterModel.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            const mesh = child as THREE.Mesh;
-            // Clone material to avoid mutating cached originals
-            mesh.material = (mesh.material as THREE.MeshStandardMaterial).clone();
-            const mat = mesh.material as THREE.MeshStandardMaterial;
-            if (mat.color) {
-              mat.color.multiplyScalar(0.3);
-              mat.emissive = new THREE.Color(0x200000);
-              mat.emissiveIntensity = 1.5;
-            }
-            mesh.castShadow = true;
-          }
-        });
-        monsterModel.scale.setScalar(1.5);
-        monsterModel.position.copy(enemyBody.position);
-        monsterModel.name = 'loadedMonster';
-        levelRef.enemyRig.remove(enemyBody);
-        levelRef.enemyRig.add(monsterModel);
-      }
-    }
-
-    // Pre-compile shaders for newly loaded models
-    this.renderer.compile(this.scene, this.camera);
   }
 
   private onCaught() {
