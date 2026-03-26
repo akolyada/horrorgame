@@ -46,6 +46,69 @@ function makeCanvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingCont
   draw(ctx);
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  // Expose canvas for normal map generation
+  (tex as any)._sourceCanvas = canvas;
+  return tex;
+}
+
+/** Generate a normal map from a canvas texture using Sobel filter on luminance heightmap */
+function makeNormalMap(sourceTexture: THREE.CanvasTexture, strength: number): THREE.CanvasTexture {
+  const srcCanvas = (sourceTexture as any)._sourceCanvas as HTMLCanvasElement;
+  const w = srcCanvas.width;
+  const h = srcCanvas.height;
+  const srcCtx = srcCanvas.getContext('2d')!;
+  const srcData = srcCtx.getImageData(0, 0, w, h).data;
+
+  // Build grayscale heightmap
+  const height = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const r = srcData[i * 4];
+    const g = srcData[i * 4 + 1];
+    const b = srcData[i * 4 + 2];
+    height[i] = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+  }
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = w;
+  outCanvas.height = h;
+  const outCtx = outCanvas.getContext('2d')!;
+  const outImg = outCtx.createImageData(w, h);
+
+  const sample = (x: number, y: number) => height[((y + h) % h) * w + ((x + w) % w)];
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // Sobel operator
+      const tl = sample(x - 1, y - 1);
+      const t  = sample(x,     y - 1);
+      const tr = sample(x + 1, y - 1);
+      const l  = sample(x - 1, y);
+      const r  = sample(x + 1, y);
+      const bl = sample(x - 1, y + 1);
+      const b  = sample(x,     y + 1);
+      const br = sample(x + 1, y + 1);
+
+      const dX = (tr + 2 * r + br) - (tl + 2 * l + bl);
+      const dY = (bl + 2 * b + br) - (tl + 2 * t + tr);
+
+      // Normal vector
+      const nx = -dX * strength;
+      const ny = -dY * strength;
+      const nz = 1.0;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+
+      const idx = (y * w + x) * 4;
+      outImg.data[idx]     = ((nx / len) * 0.5 + 0.5) * 255;
+      outImg.data[idx + 1] = ((ny / len) * 0.5 + 0.5) * 255;
+      outImg.data[idx + 2] = ((nz / len) * 0.5 + 0.5) * 255;
+      outImg.data[idx + 3] = 255;
+    }
+  }
+
+  outCtx.putImageData(outImg, 0, 0);
+  const tex = new THREE.CanvasTexture(outCanvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.copy(sourceTexture.repeat);
   return tex;
 }
 
@@ -189,6 +252,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // ── Materials with procedural textures ──
   const wallTex = makeWallTexture();
   wallTex.repeat.set(2, 1);
+  const wallNormal = makeNormalMap(wallTex, 2.0);
   const wallMat = new THREE.MeshStandardMaterial({
     color: 0x8a7e6b,
     roughness: 0.95,
@@ -196,10 +260,13 @@ function createKindergartenLevel(root: THREE.Group): Level {
     emissive: 0x050403,
     emissiveIntensity: 0.3,
     map: wallTex,
+    normalMap: wallNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
   });
 
   const wallTexDark = makeWallTexture();
   wallTexDark.repeat.set(2, 1);
+  const wallDarkNormal = makeNormalMap(wallTexDark, 2.0);
   const wallMatDark = new THREE.MeshStandardMaterial({
     color: 0x5a5347,
     roughness: 0.95,
@@ -207,10 +274,13 @@ function createKindergartenLevel(root: THREE.Group): Level {
     emissive: 0x030302,
     emissiveIntensity: 0.2,
     map: wallTexDark,
+    normalMap: wallDarkNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
   });
 
   const floorTex = makeFloorTexture();
   floorTex.repeat.set(4, 3);
+  const floorNormal = makeNormalMap(floorTex, 3.0);
   const floorMat = new THREE.MeshStandardMaterial({
     color: 0x2a2a2e,
     roughness: 0.92,
@@ -218,25 +288,33 @@ function createKindergartenLevel(root: THREE.Group): Level {
     emissive: 0x020203,
     emissiveIntensity: 0.1,
     map: floorTex,
+    normalMap: floorNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
   });
 
   const corrFloorTex = makeFloorTexture();
   corrFloorTex.repeat.set(1, 6);
+  const corrFloorNormal = makeNormalMap(corrFloorTex, 3.0);
   const corridorFloorMat = new THREE.MeshStandardMaterial({
     color: 0x22222a,
     roughness: 0.95,
     metalness: 0.02,
     map: corrFloorTex,
+    normalMap: corrFloorNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
   });
 
   const ceilTex = makeCeilingTexture();
   ceilTex.repeat.set(3, 2);
+  const ceilNormal = makeNormalMap(ceilTex, 1.5);
   const ceilingMat = new THREE.MeshStandardMaterial({
     color: 0x555550,
     roughness: 0.9,
     metalness: 0.0,
     side: THREE.DoubleSide,
     map: ceilTex,
+    normalMap: ceilNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
   });
 
   const rubbleMat = new THREE.MeshStandardMaterial({

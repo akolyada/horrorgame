@@ -11,6 +11,7 @@ import { loadLevel, type Level } from './level/loadLevel';
 import { kitbashKenneyKindergarten } from './level/kitbashKenney';
 import { loadFurnitureForLevel, loadMonsterModel } from './level/modelLoader';
 import { AudioSystem } from './audio/AudioSystem';
+import { DustParticles } from './systems/DustParticles';
 
 export type GameState = 'MainMenu' | 'Playing' | 'GameOver' | 'Win';
 
@@ -39,12 +40,14 @@ export class Game {
   private player: PlayerController | null = null;
   private enemy: EnemyController | null = null;
   private watch: WatchSystem | null = null;
+  private dust: DustParticles | null = null;
 
   private gameOverAtMs = 0;
   private hasKey = false;
   private doorOpen = false;
   private doorMessageCooldown = 0;
   private currentLevel: 'default' | 'kenney' = 'default';
+  private damageFlash = 0;
 
   // Generation counter to cancel stale async work
   private loadGeneration = 0;
@@ -88,8 +91,10 @@ export class Game {
       const HorrorShader = {
         uniforms: {
           tDiffuse: { value: null },
-          darkness: { value: 0.75 },
+          darkness: { value: 0.85 },
           time: { value: 0 },
+          enemyProximity: { value: 0 },
+          damageFlash: { value: 0 },
         },
         vertexShader: `
           varying vec2 vUv;
@@ -102,20 +107,65 @@ export class Game {
           uniform sampler2D tDiffuse;
           uniform float darkness;
           uniform float time;
+          uniform float enemyProximity;
+          uniform float damageFlash;
           varying vec2 vUv;
+
+          float hash(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+          }
+
           void main() {
-            vec4 color = texture2D(tDiffuse, vUv);
-            vec2 p = vUv * 2.0 - 1.0;
-            float r2 = dot(p, p);
-            float vig = smoothstep(0.4, 1.6, r2);
-            color.rgb *= (1.0 - vig * darkness);
-            float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            if (lum < 0.15) {
-              color.rgb = mix(color.rgb, vec3(lum * 0.6, lum * 0.8, lum * 0.7), 0.3);
+            vec2 center = vUv - 0.5;
+            float distFromCenter = length(center);
+
+            // Chromatic aberration — stronger at edges, amplified by enemy proximity
+            float caBase = 0.002;
+            float caStrength = caBase + enemyProximity * 0.006;
+            vec2 caOffset = center * distFromCenter * caStrength;
+            float r = texture2D(tDiffuse, vUv + caOffset).r;
+            float g = texture2D(tDiffuse, vUv).g;
+            float b = texture2D(tDiffuse, vUv - caOffset).b;
+            vec3 color = vec3(r, g, b);
+
+            // Scanline distortion when enemy is close
+            if (enemyProximity > 0.4) {
+              float scanline = sin(vUv.y * 300.0 + time * 10.0) * (enemyProximity - 0.4) * 0.015;
+              vec2 distortedUv = vUv + vec2(scanline, 0.0);
+              color = vec3(
+                texture2D(tDiffuse, distortedUv + caOffset).r,
+                texture2D(tDiffuse, distortedUv).g,
+                texture2D(tDiffuse, distortedUv - caOffset).b
+              );
             }
-            float grain = fract(sin(dot(vUv + time * 0.01, vec2(12.9898, 78.233))) * 43758.5453);
-            color.rgb += (grain - 0.5) * 0.04;
-            gl_FragColor = color;
+
+            // Desaturation for muted horror palette
+            float lum = dot(color, vec3(0.299, 0.587, 0.114));
+            color = mix(color, vec3(lum), 0.3);
+
+            // Smooth blue/teal color grading in shadows
+            vec3 shadowTint = vec3(lum * 0.55, lum * 0.72, lum * 0.68);
+            float shadowMix = smoothstep(0.2, 0.0, lum) * 0.4;
+            color = mix(color, shadowTint, shadowMix);
+
+            // Vignette with tighter inner radius
+            float r2 = dot(center * 2.0, center * 2.0);
+            float vig = smoothstep(0.3, 1.8, r2);
+            // Red vignette tint when enemy is near
+            vec3 vigColor = mix(vec3(0.0), vec3(0.15, 0.0, 0.0), enemyProximity);
+            color = mix(color, vigColor, vig * darkness);
+
+            // Film grain — improved hash
+            float grain = hash(vUv * 512.0 + time * 7.13);
+            float grainStrength = 0.06 + enemyProximity * 0.04;
+            color += (grain - 0.5) * grainStrength;
+
+            // Damage flash — red overlay
+            color = mix(color, vec3(0.6, 0.0, 0.0), damageFlash * 0.7);
+
+            gl_FragColor = vec4(color, 1.0);
           }
         `,
       };
@@ -198,6 +248,7 @@ export class Game {
       this.disposeLevel(this.level);
     }
     if (this.watch) this.watch.dispose();
+    if (this.dust) this.dust.dispose();
     this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
@@ -247,6 +298,8 @@ export class Game {
       getAudioCtx: () => this.audio.getContext(),
       rootEl: this.rootEl,
     });
+
+    this.dust = new DustParticles(this.scene);
 
     this.input.reset(this.level.playerSpawn);
     this.audio.startEncounter();
@@ -324,6 +377,7 @@ export class Game {
   private onCaught() {
     if (this.state !== 'Playing') return;
 
+    this.damageFlash = 1.0;
     this.gameOverAtMs = performance.now();
     this.setState('GameOver');
     this.hud.triggerJumpscare();
@@ -398,7 +452,18 @@ export class Game {
         }
       }
 
-      this.watch?.update(dt, this.hasKey, this.doorOpen);
+      // Head bob
+      if (moveSpeed > 0.5) {
+        const bobPhase = t * 7.5;
+        this.camera.position.y = Math.sin(bobPhase * 2) * 0.025;
+        this.camera.position.x = Math.sin(bobPhase) * 0.012;
+      } else {
+        this.camera.position.y *= 0.9;
+        this.camera.position.x *= 0.9;
+      }
+
+      this.dust?.update(dt, currentPos);
+      this.watch?.update(dt, this.hasKey, this.doorOpen, moveSpeed);
 
       // Exit trigger
       const distToExit = currentPos.distanceTo(this.level.exit);
@@ -449,10 +514,20 @@ export class Game {
       }
     }
 
+    // Decay damage flash
+    this.damageFlash = Math.max(0, this.damageFlash - dt * 3.0);
+
     if (this.composer) {
       const passes = (this.composer as any).passes;
-      if (passes && passes.length > 1 && passes[1].uniforms?.time) {
-        passes[1].uniforms.time.value = t;
+      if (passes && passes.length > 1 && passes[1].uniforms) {
+        const u = passes[1].uniforms;
+        u.time.value = t;
+        // Enemy proximity for shader effects
+        if (this.level && this.player) {
+          const dist = this.player.getPosition().distanceTo(this.level.enemyRig.position);
+          u.enemyProximity.value = Math.max(0, 1 - dist / 8);
+        }
+        u.damageFlash.value = this.damageFlash;
       }
       this.composer.render();
     } else {

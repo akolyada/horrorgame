@@ -57,12 +57,14 @@ export class WatchSystem {
     this.getAudioCtx = config.getAudioCtx;
 
     // ── Flashlight setup ──
-    this.flashlight = new THREE.SpotLight(0xeeddaa, 5.0, 16, Math.PI * 0.22, 0.35, 1.5);
+    this.flashlight = new THREE.SpotLight(0xeeddaa, 5.0, 12, Math.PI * 0.17, 0.5, 1.5);
     this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.width = 512;
-    this.flashlight.shadow.mapSize.height = 512;
+    const shadowRes = (navigator.hardwareConcurrency ?? 4) >= 4 ? 1024 : 512;
+    this.flashlight.shadow.mapSize.width = shadowRes;
+    this.flashlight.shadow.mapSize.height = shadowRes;
     this.flashlight.shadow.camera.near = 0.1;
     this.flashlight.shadow.camera.far = 12;
+    this.flashlight.shadow.bias = -0.001;
 
     this.flashlightTarget = new THREE.Object3D();
     this.flashlightTarget.position.set(0, 0, -1);
@@ -96,7 +98,7 @@ export class WatchSystem {
   private hasKey = false;
   private doorOpen = false;
 
-  public update(dt: number, hasKey?: boolean, doorOpen?: boolean) {
+  public update(dt: number, hasKey?: boolean, doorOpen?: boolean, moveSpeed?: number) {
     if (hasKey !== undefined) this.hasKey = hasKey;
     if (doorOpen !== undefined) this.doorOpen = doorOpen;
     const playerPos = this.getPlayerPos();
@@ -142,9 +144,16 @@ export class WatchSystem {
     }
 
     // Flashlight flicker
-    const flicker = 1.0 + Math.sin(performance.now() * 0.003) * 0.05
-      + Math.sin(performance.now() * 0.017) * 0.08;
+    const now = performance.now() * 0.001;
+    const flicker = 1.0 + Math.sin(now * 3.0) * 0.05
+      + Math.sin(now * 17.0) * 0.08;
     this.flashlight.intensity = 5.0 * Math.max(0.7, flicker);
+
+    // Flashlight sway — amplified when walking
+    const swayMul = (moveSpeed ?? 0) > 0.5 ? 3.0 : 1.0;
+    const swayX = (Math.sin(now * 1.1) * 0.008 + Math.sin(now * 2.7) * 0.004) * swayMul;
+    const swayY = (Math.sin(now * 0.9) * 0.006 + Math.cos(now * 2.3) * 0.003) * swayMul;
+    this.flashlightTarget.position.set(swayX, swayY, -1);
   }
 
   private updateNavigationHint(playerPos: THREE.Vector3) {
