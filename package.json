@@ -1,0 +1,19 @@
+{
+  "name": "threejs-mobile-horror",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.2.10"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}

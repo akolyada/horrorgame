@@ -1,0 +1,230 @@
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud .panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 20px 24px;
+  background: rgba(5, 5, 8, 0.85);
+  border: 1px solid rgba(255, 100, 80, 0.15);
+  border-radius: 12px;
+  max-width: min(520px, calc(100% - 28px));
+  pointer-events: auto;
+  text-align: center;
+  color: #ddd;
+}
+
+.hud .title {
+  font-size: 22px;
+  margin: 0 0 10px;
+  color: #ff8866;
+  letter-spacing: 0.04em;
+}
+
+.hud button {
+  cursor: pointer;
+  border: 1px solid rgba(255, 100, 80, 0.25);
+  background: rgba(255, 80, 60, 0.1);
+  color: #eee;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 16px;
+  transition: background 0.15s;
+}
+
+.hud button:hover {
+  background: rgba(255, 80, 60, 0.2);
+}
+
+.hud .jumpscareOverlay {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 120ms linear;
+  pointer-events: none;
+}
+
+.hud .jumpscareOverlay.on {
+  opacity: 1;
+}
+
+/* Joystick */
+.joystickBase {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  width: 92px;
+  height: 92px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+}
+
+.joystickStick {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transform: translate(0px, 0px);
+  pointer-events: auto;
+}
+
+/* Touch look hint */
+.touchHint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════
+   Watch UI (годинник-помічник)
+   ═══════════════════════════════════════ */
+
+.watch-ui {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.watch-ui[style*="display: block"] {
+  display: flex !important;
+}
+
+/* Proximity indicator */
+.watch-proximity {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 100, 0, 0.2);
+  border-radius: 20px;
+}
+
+.watch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.watch-dot.active {
+  box-shadow: 0 0 6px currentColor;
+}
+
+/* Navigation hint */
+/* Key indicator */
+.key-indicator {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 200, 50, 0.2);
+  border-radius: 8px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.key-icon {
+  font-size: 18px;
+}
+
+.key-text.key-found {
+  color: #ddaa22;
+  text-shadow: 0 0 8px rgba(220, 170, 30, 0.5);
+}
+
+/* Game messages */
+.game-message {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 16px;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+  padding: 8px 20px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+/* Level selector */
+.level-btn {
+  font-size: 13px !important;
+  padding: 6px 14px !important;
+  opacity: 0.5;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+
+.level-btn.active {
+  opacity: 1;
+  border-color: rgba(255, 100, 80, 0.5) !important;
+}
+
+.watch-hint {
+  font-size: 13px;
+  color: rgba(180, 255, 180, 0.8);
+  text-shadow: 0 0 8px rgba(100, 255, 100, 0.3);
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  transition: opacity 0.5s ease;
+  max-width: 200px;
+  text-align: right;
+  letter-spacing: 0.02em;
+}

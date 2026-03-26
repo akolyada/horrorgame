@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Keep only GLB models from asset packs, skip other formats
+public/assets/**/FBX format/
+public/assets/**/OBJ format/
+public/assets/**/Blend format/
+public/assets/**/*.zip
+public/assets/kenney_building-kit.zip
