@@ -10,24 +10,21 @@ import * as THREE from 'three';
  */
 
 type WatchConfig = {
-  /** The camera to attach the flashlight to */
   camera: THREE.Camera;
-  /** Function that returns enemy world position */
   getEnemyPos: () => THREE.Vector3;
-  /** Function that returns player world position */
   getPlayerPos: () => THREE.Vector3;
-  /** Exit position */
+  getPlayerYaw: () => number;
   exitPos: THREE.Vector3;
-  /** Room centers for navigation */
   roomCenters: Map<string, THREE.Vector3>;
-  /** Audio context provider */
   getAudioCtx: () => AudioContext | null;
+  rootEl: HTMLElement;
 };
 
 export class WatchSystem {
   private readonly camera: THREE.Camera;
   private readonly getEnemyPos: () => THREE.Vector3;
   private readonly getPlayerPos: () => THREE.Vector3;
+  private readonly getPlayerYaw: () => number;
   private readonly exitPos: THREE.Vector3;
   private readonly roomCenters: Map<string, THREE.Vector3>;
   private readonly getAudioCtx: () => AudioContext | null;
@@ -39,7 +36,6 @@ export class WatchSystem {
   // Beep state
   private beepInterval = 0;
   private timeSinceBeep = 0;
-  private lastBeepOsc: OscillatorNode | null = null;
 
   // UI elements
   private readonly watchEl: HTMLDivElement;
@@ -55,12 +51,12 @@ export class WatchSystem {
     this.camera = config.camera;
     this.getEnemyPos = config.getEnemyPos;
     this.getPlayerPos = config.getPlayerPos;
+    this.getPlayerYaw = config.getPlayerYaw;
     this.exitPos = config.exitPos;
     this.roomCenters = config.roomCenters;
     this.getAudioCtx = config.getAudioCtx;
 
     // ── Flashlight setup ──
-    // Weak, narrow cone — toy watch light
     this.flashlight = new THREE.SpotLight(0xeeddaa, 5.0, 16, Math.PI * 0.22, 0.35, 1.5);
     this.flashlight.castShadow = true;
     this.flashlight.shadow.mapSize.width = 512;
@@ -68,21 +64,18 @@ export class WatchSystem {
     this.flashlight.shadow.camera.near = 0.1;
     this.flashlight.shadow.camera.far = 12;
 
-    // Target for spotlight direction (placed in front of camera)
     this.flashlightTarget = new THREE.Object3D();
     this.flashlightTarget.position.set(0, 0, -1);
     this.camera.add(this.flashlightTarget);
     this.flashlight.target = this.flashlightTarget;
 
-    // Attach light to camera (slightly below and right — watch on wrist)
     this.flashlight.position.set(0.15, -0.15, 0);
     this.camera.add(this.flashlight);
 
-    // ── UI setup ──
+    // ── UI setup — append to game root, not document.body ──
     this.watchEl = document.createElement('div');
     this.watchEl.className = 'watch-ui';
 
-    // Proximity indicator (dots that light up)
     this.proximityEl = document.createElement('div');
     this.proximityEl.className = 'watch-proximity';
     for (let i = 0; i < 5; i++) {
@@ -93,12 +86,11 @@ export class WatchSystem {
     }
     this.watchEl.appendChild(this.proximityEl);
 
-    // Navigation hint text
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'watch-hint';
     this.watchEl.appendChild(this.hintEl);
 
-    document.body.appendChild(this.watchEl);
+    config.rootEl.appendChild(this.watchEl);
   }
 
   private hasKey = false;
@@ -113,16 +105,14 @@ export class WatchSystem {
     // ── Monster proximity ──
     const distToEnemy = playerPos.distanceTo(enemyPos);
     const maxDetectRange = 15;
-    const proximity = Math.max(0, 1 - distToEnemy / maxDetectRange); // 0=far, 1=touching
+    const proximity = Math.max(0, 1 - distToEnemy / maxDetectRange);
 
-    // Update proximity dots
     const activeDots = Math.round(proximity * 5);
     for (let i = 0; i < 5; i++) {
       if (i < activeDots) {
         this.proximityDots[i].classList.add('active');
-        // Color ramps from yellow to red
         const t = i / 4;
-        const r = Math.round(255);
+        const r = 255;
         const g = Math.round(255 * (1 - t));
         this.proximityDots[i].style.background = `rgb(${r},${g},0)`;
       } else {
@@ -131,9 +121,7 @@ export class WatchSystem {
       }
     }
 
-    // Beep frequency scales with proximity
     if (proximity > 0.05) {
-      // Beep interval: 2s when far, 0.15s when very close
       this.beepInterval = 2.0 - proximity * 1.85;
       this.timeSinceBeep += dt;
 
@@ -153,7 +141,7 @@ export class WatchSystem {
       this.updateNavigationHint(playerPos);
     }
 
-    // Flashlight flicker (subtle, adds atmosphere)
+    // Flashlight flicker
     const flicker = 1.0 + Math.sin(performance.now() * 0.003) * 0.05
       + Math.sin(performance.now() * 0.017) * 0.08;
     this.flashlight.intensity = 5.0 * Math.max(0.7, flicker);
@@ -186,30 +174,35 @@ export class WatchSystem {
       return;
     }
 
-    // Door open — guide to exit
+    // Door open — guide to exit using camera-relative direction
     const toExit = this.exitPos.clone().sub(playerPos);
     toExit.y = 0;
-    const angle = Math.atan2(toExit.x, -toExit.z);
+
+    // Compute angle relative to player's camera facing direction
+    const yaw = this.getPlayerYaw();
+    const worldAngle = Math.atan2(toExit.x, -toExit.z);
+    let relAngle = worldAngle - yaw;
+    // Normalize to [-PI, PI]
+    while (relAngle > Math.PI) relAngle -= Math.PI * 2;
+    while (relAngle < -Math.PI) relAngle += Math.PI * 2;
 
     let dirHint = '';
-    if (Math.abs(angle) < Math.PI / 4) dirHint = 'прямо';
-    else if (angle > Math.PI / 4 && angle < 3 * Math.PI / 4) dirHint = 'праворуч';
-    else if (angle < -Math.PI / 4 && angle > -3 * Math.PI / 4) dirHint = 'ліворуч';
+    if (Math.abs(relAngle) < Math.PI / 4) dirHint = 'прямо';
+    else if (relAngle > Math.PI / 4 && relAngle < 3 * Math.PI / 4) dirHint = 'праворуч';
+    else if (relAngle < -Math.PI / 4 && relAngle > -3 * Math.PI / 4) dirHint = 'ліворуч';
     else dirHint = 'назад';
 
     const hints = [
       `Вихід — ${dirHint}...`,
       `Тікай ${dirHint}!`,
     ];
-    const hint = hints[Math.floor(Math.random() * hints.length)];
-    this.setHint(hint);
+    this.setHint(hints[Math.floor(Math.random() * hints.length)]);
   }
 
   private setHint(text: string) {
     if (text === this.currentHint) return;
     this.currentHint = text;
     this.hintEl.textContent = text;
-    // Fade in animation
     this.hintEl.style.opacity = '0';
     requestAnimationFrame(() => {
       this.hintEl.style.opacity = '1';
@@ -223,7 +216,6 @@ export class WatchSystem {
 
     const now = ctx.currentTime;
 
-    // Higher pitch when closer
     const freq = 800 + proximity * 1200;
     const duration = 0.04 + (1 - proximity) * 0.06;
     const volume = 0.08 + proximity * 0.15;

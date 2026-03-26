@@ -71,12 +71,6 @@ src/
 - GLB models are loaded async after game start (non-blocking, with fallback to procedural)
 
 ## Known Issues / Tech Debt
-- Memory leaks on game restart: geometries/materials/textures not disposed
-- AudioSystem setTimeout chains (creaks, melody) not cleaned up on restart
-- Enemy animation uses fragile children[] index access — breaks after GLB model loads
-- Locked door message fires every frame when player is nearby (should debounce)
-- Ball pit creates ~756 unique materials (should share 8 pre-made ones)
-- WatchSystem nav hints use world-space direction instead of camera-relative
-- Event listeners on window never removed
+- Event listeners on window (InputSystem) never removed on dispose
 - RAF loop runs even on main menu (wastes mobile battery)
-- modelLoader cache doesn't deep-clone materials — mutation affects all copies
+- No pointer lock for desktop mouse look

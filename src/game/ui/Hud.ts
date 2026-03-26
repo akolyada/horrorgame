@@ -77,7 +77,6 @@ export class Hud {
       e.preventDefault();
       this.onStartCb?.(this.selectedLevel);
     });
-    this.startBtn.addEventListener('click', () => this.onStartCb?.(this.selectedLevel));
     this.mainPanel.appendChild(this.startBtn);
 
     this.errorLine = document.createElement('div');
@@ -107,7 +106,6 @@ export class Hud {
       e.preventDefault();
       this.onRestartCb?.();
     });
-    this.restartBtn.addEventListener('click', () => this.onRestartCb?.());
     this.gameOverPanel.appendChild(this.restartBtn);
 
     this.skipBtn = document.createElement('button');
@@ -117,7 +115,6 @@ export class Hud {
       e.preventDefault();
       this.onSkipCb?.();
     });
-    this.skipBtn.addEventListener('click', () => this.onSkipCb?.());
     this.gameOverPanel.appendChild(this.skipBtn);
 
     // Win
@@ -137,7 +134,6 @@ export class Hud {
       e.preventDefault();
       this.onRestartCb?.();
     });
-    winRestart.addEventListener('click', () => this.onRestartCb?.());
     this.winPanel.appendChild(winRestart);
 
     // Jumpscare overlay (CSS flash)

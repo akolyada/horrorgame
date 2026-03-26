@@ -5,6 +5,10 @@ export class AudioSystem {
   private ambienceEnabled = false;
 
   private rumbleNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = [];
+  private lfoOsc: OscillatorNode | null = null;
+
+  // Creak scheduling
+  private creakTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Music state
   private musicGain: GainNode | null = null;
@@ -12,10 +16,15 @@ export class AudioSystem {
   private musicPlaying = false;
   private musicTensionTarget = 0;
   private musicTension = 0;
+  private melodyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Footstep state
   private footstepTimer = 0;
   private isMoving = false;
+
+  // Breathing state
+  private breathingNode: { src: AudioBufferSourceNode; gain: GainNode; id: number } | null = null;
+  private breathingIdCounter = 0;
 
   public async ensureContext() {
     if (this.ctx) return;
@@ -40,7 +49,6 @@ export class AudioSystem {
 
     if (this.rumbleNodes.length > 0) return;
 
-    // Deeper, creepier rumble for the kindergarten
     const makeRumble = (freq: number, vol: number) => {
       const osc = this.ctx!.createOscillator();
       const gain = this.ctx!.createGain();
@@ -61,29 +69,28 @@ export class AudioSystem {
       return { osc, gain };
     };
 
-    this.rumbleNodes.push(makeRumble(28, 0.10));  // deep sub-bass
+    this.rumbleNodes.push(makeRumble(28, 0.10));
     this.rumbleNodes.push(makeRumble(42, 0.07));
     this.rumbleNodes.push(makeRumble(66, 0.04));
 
-    // Add a slow LFO modulation for unease
+    // LFO modulation — store reference so it can be stopped
     const lfo = this.ctx.createOscillator();
     const lfoGain = this.ctx.createGain();
     lfo.type = 'sine';
-    lfo.frequency.value = 0.15; // very slow wobble
+    lfo.frequency.value = 0.15;
     lfoGain.gain.value = 15;
     lfo.connect(lfoGain);
-    // Connect LFO to filter frequency of first rumble
     lfo.start();
+    this.lfoOsc = lfo;
 
-    // Occasional creak/groan via filtered noise burst
     this.scheduleRandomCreak();
   }
 
   private scheduleRandomCreak() {
     if (!this.ctx || !this.ambienceGain) return;
 
-    const delay = 5 + Math.random() * 15; // 5-20 seconds between creaks
-    setTimeout(() => {
+    const delay = 5 + Math.random() * 15;
+    this.creakTimeout = setTimeout(() => {
       if (!this.ctx || !this.ambienceGain || !this.ambienceEnabled) {
         this.scheduleRandomCreak();
         return;
@@ -93,11 +100,17 @@ export class AudioSystem {
     }, delay * 1000);
   }
 
+  private stopCreakSchedule() {
+    if (this.creakTimeout !== null) {
+      clearTimeout(this.creakTimeout);
+      this.creakTimeout = null;
+    }
+  }
+
   private playCreak() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Filtered noise burst — sounds like creaking wood/pipes
     const bufferSize = this.ctx.sampleRate * 0.8;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -150,9 +163,20 @@ export class AudioSystem {
     }
   }
 
+  /** Stop all playing audio and release scheduled timers */
+  public stopAll() {
+    this.stopMusic();
+    this.stopCreakSchedule();
+    this.stopBreathing();
+
+    if (this.lfoOsc) {
+      try { this.lfoOsc.stop(); } catch { /* */ }
+      this.lfoOsc = null;
+    }
+  }
+
   // ── Footsteps ──
 
-  /** Call each frame with movement speed to trigger footstep sounds */
   public updateFootsteps(dt: number, speed: number) {
     this.isMoving = speed > 0.3;
     if (!this.isMoving) {
@@ -160,7 +184,6 @@ export class AudioSystem {
       return;
     }
 
-    // Footstep interval: faster when running
     const interval = 0.42;
     this.footstepTimer += dt;
     if (this.footstepTimer >= interval) {
@@ -173,7 +196,6 @@ export class AudioSystem {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Short noise burst filtered to sound like a step on tile
     const bufferSize = Math.floor(this.ctx.sampleRate * 0.08);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -199,14 +221,11 @@ export class AudioSystem {
     src.start(now);
   }
 
-  // ── Monster breathing (played when monster is close) ──
-
-  private breathingNode: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  // ── Monster breathing ──
 
   public updateMonsterBreathing(distance: number) {
     if (!this.ctx) return;
 
-    // Start breathing sound when monster is within range
     const maxRange = 8;
     if (distance < maxRange && !this.breathingNode) {
       this.startBreathing();
@@ -217,10 +236,15 @@ export class AudioSystem {
       this.breathingNode.gain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.1);
 
       if (distance >= maxRange) {
-        this.breathingNode.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
+        // Capture the id of the node we're fading out
+        const fadingId = this.breathingNode.id;
+        const fadingNode = this.breathingNode;
+        this.breathingNode = null; // clear immediately so a new one can be created
+
+        fadingNode.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
         setTimeout(() => {
-          this.breathingNode?.src.stop();
-          this.breathingNode = null;
+          // Only stop if this specific node hasn't been reused
+          try { fadingNode.src.stop(); } catch { /* */ }
         }, 500);
       }
     }
@@ -230,16 +254,14 @@ export class AudioSystem {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Simulate breathing with modulated filtered noise
-    const duration = 30; // long buffer, looping
+    const duration = 30;
     const bufferSize = Math.floor(this.ctx.sampleRate * duration);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
 
-    const breathRate = 1.2; // breaths per second
+    const breathRate = 1.2;
     for (let i = 0; i < bufferSize; i++) {
       const t = i / this.ctx.sampleRate;
-      // Breathing envelope: sine wave creates inhale/exhale pattern
       const envelope = Math.pow(Math.abs(Math.sin(Math.PI * t * breathRate)), 0.6);
       data[i] = (Math.random() * 2 - 1) * envelope;
     }
@@ -261,7 +283,15 @@ export class AudioSystem {
     gain.connect(this.ctx.destination);
     src.start(now);
 
-    this.breathingNode = { src, gain };
+    this.breathingIdCounter++;
+    this.breathingNode = { src, gain, id: this.breathingIdCounter };
+  }
+
+  private stopBreathing() {
+    if (this.breathingNode) {
+      try { this.breathingNode.src.stop(); } catch { /* */ }
+      this.breathingNode = null;
+    }
   }
 
   // ── Door sound ──
@@ -293,7 +323,7 @@ export class AudioSystem {
     osc.stop(now + 0.6);
   }
 
-  // ── Scare & Win (existing, improved) ──
+  // ── Scare & Win ──
 
   public async playScare() {
     await this.ensureContext();
@@ -302,7 +332,6 @@ export class AudioSystem {
 
     const now = this.ctx.currentTime;
 
-    // White noise burst — harsher, more distorted
     const bufferSize = 2 * this.ctx.sampleRate;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -326,7 +355,6 @@ export class AudioSystem {
     gain.connect(this.ctx.destination);
     src.start(now);
 
-    // Sub punch (heavier)
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(60, now);
@@ -339,7 +367,6 @@ export class AudioSystem {
     osc.start(now);
     osc.stop(now + 0.4);
 
-    // Dissonant chord for extra horror
     for (const freq of [180, 190, 285]) {
       const o = this.ctx.createOscillator();
       o.type = 'sawtooth';
@@ -383,7 +410,6 @@ export class AudioSystem {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Bright chime — two triangle waves with a rising pitch
     for (const [freq, delay] of [[520, 0], [780, 0.08], [1040, 0.16]] as [number, number][]) {
       const osc = this.ctx.createOscillator();
       osc.type = 'triangle';
@@ -401,7 +427,7 @@ export class AudioSystem {
     }
   }
 
-  // ── Background music (procedural horror drone + melody) ──
+  // ── Background music ──
 
   public startMusic() {
     if (!this.ctx || this.musicPlaying) return;
@@ -411,7 +437,6 @@ export class AudioSystem {
     this.musicGain.gain.value = 0.06;
     this.musicGain.connect(this.ctx.destination);
 
-    // Pad layer: minor chord drone (Am: A2, C3, E3)
     const padFreqs = [110, 130.81, 164.81];
     for (const freq of padFreqs) {
       const osc = this.ctx.createOscillator();
@@ -433,10 +458,9 @@ export class AudioSystem {
       this.musicOscs.push(osc);
     }
 
-    // Tension layer: dissonant tritone (higher when enemy close)
     const tensionOsc = this.ctx.createOscillator();
     tensionOsc.type = 'sawtooth';
-    tensionOsc.frequency.value = 185; // F#3 — tritone against C
+    tensionOsc.frequency.value = 185;
     const tensionFilter = this.ctx.createBiquadFilter();
     tensionFilter.type = 'lowpass';
     tensionFilter.frequency.value = 300;
@@ -448,20 +472,15 @@ export class AudioSystem {
     tensionOsc.start();
     this.musicOscs.push(tensionOsc);
 
-    // Schedule melody notes (pentatonic minor, looping)
     this.scheduleMelodyLoop();
   }
-
-  private melodyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private scheduleMelodyLoop() {
     if (!this.ctx || !this.musicGain) return;
 
-    // A minor pentatonic: A3, C4, D4, E4, G4
     const notes = [220, 261.63, 293.66, 329.63, 392];
-    // Slow, sparse melody pattern (some rests)
-    const pattern = [0, -1, 2, -1, 4, 3, -1, 1, -1, -1, 0, 2]; // -1 = rest
-    const noteLen = 0.8; // seconds per step
+    const pattern = [0, -1, 2, -1, 4, 3, -1, 1, -1, -1, 0, 2];
+    const noteLen = 0.8;
 
     let stepIndex = 0;
     const playStep = () => {
@@ -497,33 +516,31 @@ export class AudioSystem {
       try { osc.stop(); } catch { /* already stopped */ }
     }
     this.musicOscs = [];
+    if (this.musicGain) {
+      this.musicGain.disconnect();
+      this.musicGain = null;
+    }
     if (this.melodyTimeout) {
       clearTimeout(this.melodyTimeout);
       this.melodyTimeout = null;
     }
   }
 
-  /** Update music tension based on enemy distance (0=far, 1=close) */
   public updateMusicTension(enemyDist: number) {
     if (!this.ctx || !this.musicGain) return;
     const maxRange = 12;
     this.musicTensionTarget = Math.max(0, 1 - enemyDist / maxRange);
-    // Smooth toward target
     this.musicTension += (this.musicTensionTarget - this.musicTension) * 0.02;
 
-    // Increase overall volume with tension
     this.musicGain.gain.setTargetAtTime(
       0.06 + this.musicTension * 0.08,
       this.ctx.currentTime, 0.3,
     );
 
-    // Fade in tension oscillator (last one in musicOscs)
     if (this.musicOscs.length > 0) {
       const tensionOsc = this.musicOscs[this.musicOscs.length - 1];
-      // Access gain through the graph — we use the musicGain master instead
-      // The tension gain node was connected inline, so we adjust via the osc frequency for unease
       tensionOsc.frequency.setTargetAtTime(
-        185 + this.musicTension * 40, // slight detune when close
+        185 + this.musicTension * 40,
         this.ctx.currentTime, 0.5,
       );
     }

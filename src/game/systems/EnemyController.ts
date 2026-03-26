@@ -124,7 +124,7 @@ export class EnemyController {
         break;
     }
 
-    this.rig.position.y = this.rig.position.y;
+    // Keep enemy on ground plane
   }
 
   private updatePatrol(dt: number, enemyPos: THREE.Vector3) {

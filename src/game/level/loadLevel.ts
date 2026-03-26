@@ -732,16 +732,19 @@ function createKindergartenLevel(root: THREE.Group): Level {
     emissive: 0x200000, emissiveIntensity: 1.8,
   });
   const enemyBody = new THREE.Group();
-  enemyBody.position.y = -playerHeight; // offset so rig Y = playerHeight is ground-relative
+  enemyBody.name = 'enemyBody';
+  enemyBody.position.y = -playerHeight;
 
   // Torso
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.25), enemyMat);
+  torso.name = 'enemyTorso';
   torso.position.y = 1.1;
   torso.castShadow = true;
   enemyBody.add(torso);
 
   // Head
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), enemyMat);
+  head.name = 'enemyHead';
   head.position.y = 1.6;
   head.castShadow = true;
   enemyBody.add(head);
@@ -761,6 +764,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // Arms (pivots at shoulder)
   const armGeo = new THREE.BoxGeometry(0.1, 0.5, 0.1);
   const leftArmPivot = new THREE.Object3D();
+  leftArmPivot.name = 'leftArmPivot';
   leftArmPivot.position.set(-0.3, 1.35, 0);
   const leftArmMesh = new THREE.Mesh(armGeo, enemyMat);
   leftArmMesh.position.y = -0.25;
@@ -769,6 +773,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   enemyBody.add(leftArmPivot);
 
   const rightArmPivot = new THREE.Object3D();
+  rightArmPivot.name = 'rightArmPivot';
   rightArmPivot.position.set(0.3, 1.35, 0);
   const rightArmMesh = new THREE.Mesh(armGeo, enemyMat);
   rightArmMesh.position.y = -0.25;
@@ -779,6 +784,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // Legs (pivots at hip)
   const legGeo = new THREE.BoxGeometry(0.12, 0.55, 0.12);
   const leftLegPivot = new THREE.Object3D();
+  leftLegPivot.name = 'leftLegPivot';
   leftLegPivot.position.set(-0.12, 0.8, 0);
   const leftLegMesh = new THREE.Mesh(legGeo, enemyMat);
   leftLegMesh.position.y = -0.275;
@@ -787,6 +793,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   enemyBody.add(leftLegPivot);
 
   const rightLegPivot = new THREE.Object3D();
+  rightLegPivot.name = 'rightLegPivot';
   rightLegPivot.position.set(0.12, 0.8, 0);
   const rightLegMesh = new THREE.Mesh(legGeo, enemyMat);
   rightLegMesh.position.y = -0.275;
@@ -986,24 +993,20 @@ function createKindergartenLevel(root: THREE.Group): Level {
   pitGroup.add(pitFloor);
   // Balls — fill the pit in a grid pattern, multiple layers
   const ballColors = [0xff3333, 0x33ff33, 0x3333ff, 0xffff33, 0xff33ff, 0x33ffff, 0xff8800, 0xff0088];
+  // Pre-create 8 shared materials instead of one per ball
+  const ballMats = ballColors.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.1 }));
   const BALL_R = 0.11;
   const BALL_D = BALL_R * 2;
-  const ballGeo = new THREE.SphereGeometry(BALL_R, 6, 6); // shared geometry
+  const ballGeo = new THREE.SphereGeometry(BALL_R, 6, 6);
   const cols = Math.floor((PIT_W - 0.3) / BALL_D);
   const rows = Math.floor((PIT_D - 0.3) / BALL_D);
   const layers = Math.floor((PIT_H - 0.05) / BALL_D);
   for (let ly = 0; ly < layers; ly++) {
-    // Offset every other layer for natural packing
     const offsetX = (ly % 2) * BALL_R;
     const offsetZ = (ly % 2) * BALL_R;
     for (let col = 0; col < cols; col++) {
       for (let row = 0; row < rows; row++) {
-        const ballMat2 = new THREE.MeshStandardMaterial({
-          color: ballColors[Math.floor(Math.random() * ballColors.length)],
-          roughness: 0.35,
-          metalness: 0.1,
-        });
-        const ball = new THREE.Mesh(ballGeo, ballMat2);
+        const ball = new THREE.Mesh(ballGeo, ballMats[Math.floor(Math.random() * ballMats.length)]);
         ball.position.set(
           -((cols - 1) * BALL_D) / 2 + col * BALL_D + offsetX + (Math.random() - 0.5) * 0.03,
           BALL_R + ly * BALL_D + (Math.random() - 0.5) * 0.02,

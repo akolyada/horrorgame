@@ -43,7 +43,11 @@ export class Game {
   private gameOverAtMs = 0;
   private hasKey = false;
   private doorOpen = false;
+  private doorMessageCooldown = 0;
   private currentLevel: 'default' | 'kenney' = 'default';
+
+  // Generation counter to cancel stale async work
+  private loadGeneration = 0;
 
   // Previous player position for speed calculation
   private prevPlayerPos = new THREE.Vector3();
@@ -51,7 +55,6 @@ export class Game {
   constructor(rootEl: HTMLElement) {
     this.rootEl = rootEl;
 
-    // Renderer — dark, moody
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance',
@@ -65,12 +68,10 @@ export class Game {
     this.renderer.toneMappingExposure = 1.6;
     this.rootEl.appendChild(this.renderer.domElement);
 
-    // Scene
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0x080810, 0.04);
     this.scene.background = new THREE.Color(0x010102);
 
-    // Camera (first-person rig)
     this.camera = new THREE.PerspectiveCamera(75, 1, 0.05, 50);
 
     this.playerPitch.add(this.camera);
@@ -78,12 +79,6 @@ export class Game {
     this.playerRig.add(this.playerYaw);
     this.scene.add(this.playerRig);
 
-    // NO player point light — flashlight from WatchSystem is the only light source
-
-    // No HDRI background — pure darkness for the kindergarten
-    // (removed the entrance_hall.jpg loader)
-
-    // Post-processing: vignette + slight color shift for horror feel
     const deviceDpr = window.devicePixelRatio || 1;
     const enablePost = deviceDpr <= 1.6;
     if (enablePost) {
@@ -112,21 +107,14 @@ export class Game {
             vec4 color = texture2D(tDiffuse, vUv);
             vec2 p = vUv * 2.0 - 1.0;
             float r2 = dot(p, p);
-
-            // Strong vignette — edges go very dark
             float vig = smoothstep(0.4, 1.6, r2);
             color.rgb *= (1.0 - vig * darkness);
-
-            // Slight green/blue tint in shadows for horror atmosphere
             float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
             if (lum < 0.15) {
               color.rgb = mix(color.rgb, vec3(lum * 0.6, lum * 0.8, lum * 0.7), 0.3);
             }
-
-            // Film grain
             float grain = fract(sin(dot(vUv + time * 0.01, vec2(12.9898, 78.233))) * 43758.5453);
             color.rgb += (grain - 0.5) * 0.04;
-
             gl_FragColor = color;
           }
         `,
@@ -137,7 +125,6 @@ export class Game {
       this.composer = composer;
     }
 
-    // Systems
     this.hud = new Hud(rootEl);
     this.audio = new AudioSystem();
     this.input = new InputSystem(rootEl);
@@ -202,26 +189,30 @@ export class Game {
   private async startGame(levelType: 'default' | 'kenney' = 'default') {
     this.currentLevel = levelType;
 
-    // Clean up previous level
-    if (this.level) this.scene.remove(this.level.root);
+    // Increment generation to invalidate any pending async work
+    this.loadGeneration++;
+    const gen = this.loadGeneration;
+
+    // Clean up previous level — dispose GPU resources
+    if (this.level) {
+      this.disposeLevel(this.level);
+    }
     if (this.watch) this.watch.dispose();
+    this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
 
-    // If Kenney level selected, overlay kitbash geometry
     if (levelType === 'kenney') {
       await kitbashKenneyKindergarten(this.level.root, this.level);
     }
 
-    // Load 3D furniture models and monster (async, non-blocking for gameplay)
-    this.loadModels();
+    // Load 3D models (async, non-blocking) with generation guard
+    this.loadModels(gen);
 
-    // Position rig
     this.playerRig.position.copy(this.level.spawn);
     this.playerRig.position.y = this.level.playerHeight;
     this.prevPlayerPos.copy(this.playerRig.position);
 
-    // Player controller
     this.player = new PlayerController({
       rig: this.playerRig,
       radius: 0.35,
@@ -235,7 +226,6 @@ export class Game {
       obstacles: this.level.obstacles,
     });
 
-    // Enemy controller
     this.enemy = new EnemyController({
       rig: this.level.enemyRig,
       target: () => this.player?.getPosition() ?? new THREE.Vector3(),
@@ -247,14 +237,15 @@ export class Game {
       patrolPoints: this.level.patrolPoints,
     });
 
-    // Watch system
     this.watch = new WatchSystem({
       camera: this.camera,
       getEnemyPos: () => this.level!.enemyRig.position.clone(),
       getPlayerPos: () => this.player?.getPosition() ?? new THREE.Vector3(),
+      getPlayerYaw: () => this.input.getYaw(),
       exitPos: this.level.exit,
       roomCenters: this.level.roomCenters,
       getAudioCtx: () => this.audio.getContext(),
+      rootEl: this.rootEl,
     });
 
     this.input.reset(this.level.playerSpawn);
@@ -264,27 +255,55 @@ export class Game {
     this.gameOverAtMs = 0;
     this.hasKey = false;
     this.doorOpen = false;
+    this.doorMessageCooldown = 0;
     this.hud.setKeyStatus(false);
     this.input.setEnabled(true);
     this.setState('Playing');
   }
 
-  private async loadModels() {
+  private disposeLevel(level: Level) {
+    this.scene.remove(level.root);
+    level.root.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if (mat && typeof mat.dispose === 'function') {
+            // Dispose textures
+            for (const key of Object.keys(mat)) {
+              const val = (mat as any)[key];
+              if (val instanceof THREE.Texture) val.dispose();
+            }
+            mat.dispose();
+          }
+        }
+      }
+    });
+  }
+
+  private async loadModels(gen: number) {
     if (!this.level) return;
+    const levelRef = this.level;
 
-    // Load furniture into rooms
-    await loadFurnitureForLevel(this.level.root, this.level.obstacles, this.level.roomCenters);
+    await loadFurnitureForLevel(levelRef.root, levelRef.obstacles, levelRef.roomCenters);
 
-    // Load monster model to replace procedural body
+    // Check if game was restarted during loading
+    if (this.loadGeneration !== gen) return;
+
     const monsterModel = await loadMonsterModel();
-    if (monsterModel.children.length > 0 && this.level) {
-      const enemyBody = this.level.enemyRig.children[0];
+
+    if (this.loadGeneration !== gen) return;
+
+    if (monsterModel.children.length > 0) {
+      const enemyBody = levelRef.enemyRig.getObjectByName('enemyBody');
       if (enemyBody) {
-        // Darken all materials for horror feel
         monsterModel.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
-            const mat = (mesh.material as THREE.MeshStandardMaterial);
+            // Clone material to avoid mutating cached originals
+            mesh.material = (mesh.material as THREE.MeshStandardMaterial).clone();
+            const mat = mesh.material as THREE.MeshStandardMaterial;
             if (mat.color) {
               mat.color.multiplyScalar(0.3);
               mat.emissive = new THREE.Color(0x200000);
@@ -293,11 +312,11 @@ export class Game {
             mesh.castShadow = true;
           }
         });
-        // Scale to match player height, position at ground
         monsterModel.scale.setScalar(1.5);
         monsterModel.position.copy(enemyBody.position);
-        this.level.enemyRig.remove(enemyBody);
-        this.level.enemyRig.add(monsterModel);
+        monsterModel.name = 'loadedMonster';
+        levelRef.enemyRig.remove(enemyBody);
+        levelRef.enemyRig.add(monsterModel);
       }
     }
   }
@@ -335,13 +354,11 @@ export class Game {
       this.player.update(dt);
       this.enemy.update(dt);
 
-      // Footstep audio
       const currentPos = this.player.getPosition();
       const moveSpeed = currentPos.distanceTo(this.prevPlayerPos) / Math.max(dt, 0.001);
       this.prevPlayerPos.copy(currentPos);
       this.audio.updateFootsteps(dt, moveSpeed);
 
-      // Monster breathing audio + music tension
       const distToEnemy = currentPos.distanceTo(this.level.enemyRig.position);
       this.audio.updateMonsterBreathing(distToEnemy);
       this.audio.updateMusicTension(distToEnemy);
@@ -358,33 +375,32 @@ export class Game {
         }
       }
 
-      // Door unlock — approach with key
+      // Door unlock
       if (this.hasKey && !this.doorOpen) {
         const distToDoor = currentPos.distanceTo(this.level.doorPos);
         if (distToDoor < 1.8) {
           this.doorOpen = true;
-          // Remove door collision
           const idx = this.level.obstacles.indexOf(this.level.doorObstacle);
           if (idx !== -1) this.level.obstacles.splice(idx, 1);
-          // Animate door opening (swing open)
           this.level.doorObj.visible = false;
           this.hud.showMessage('Двері відчинено!', 2000);
           this.audio.playDoorCreak();
         }
       }
 
-      // Locked door message
+      // Locked door message — debounced
       if (!this.hasKey && !this.doorOpen) {
+        this.doorMessageCooldown -= dt;
         const distToDoor = currentPos.distanceTo(this.level.doorPos);
-        if (distToDoor < 1.5) {
+        if (distToDoor < 1.5 && this.doorMessageCooldown <= 0) {
           this.hud.showMessage('Замкнено. Потрібен ключ.', 1500);
+          this.doorMessageCooldown = 2.0; // show at most every 2 seconds
         }
       }
 
-      // Watch updates
       this.watch?.update(dt, this.hasKey, this.doorOpen);
 
-      // Exit trigger (door must be open)
+      // Exit trigger
       const distToExit = currentPos.distanceTo(this.level.exit);
       if (distToExit < 0.9 && this.doorOpen) {
         this.setState('Win');
@@ -396,23 +412,28 @@ export class Game {
       this.input.update(dt);
     }
 
-    // Enemy procedural animation
+    // Enemy procedural animation — look up parts by name
     if (this.level) {
-      const body = this.level.enemyRig.children[0]; // enemyBody group
-      if (body && body.children.length >= 7) {
+      const body = this.level.enemyRig.getObjectByName('enemyBody');
+      if (body) {
         const state = this.enemy?.getState() ?? 'patrol';
         const speed = state === 'chase' ? 8 : state === 'search' ? 5 : 3;
         const amplitude = state === 'chase' ? 0.6 : state === 'search' ? 0.4 : 0.25;
         const phase = t * speed;
-        // Arms swing opposite to legs
-        body.children[4].rotation.x = Math.sin(phase) * amplitude;       // leftArm
-        body.children[5].rotation.x = -Math.sin(phase) * amplitude;      // rightArm
-        body.children[6].rotation.x = -Math.sin(phase) * amplitude * 0.8; // leftLeg
-        body.children[7].rotation.x = Math.sin(phase) * amplitude * 0.8;  // rightLeg
-        // Subtle head bob
-        body.children[1].position.y = 1.6 + Math.abs(Math.sin(phase * 2)) * 0.02;
-        // Torso lean
-        body.children[0].rotation.x = Math.sin(phase) * 0.03;
+
+        const leftArm = body.getObjectByName('leftArmPivot');
+        const rightArm = body.getObjectByName('rightArmPivot');
+        const leftLeg = body.getObjectByName('leftLegPivot');
+        const rightLeg = body.getObjectByName('rightLegPivot');
+        const head = body.getObjectByName('enemyHead');
+        const torso = body.getObjectByName('enemyTorso');
+
+        if (leftArm) leftArm.rotation.x = Math.sin(phase) * amplitude;
+        if (rightArm) rightArm.rotation.x = -Math.sin(phase) * amplitude;
+        if (leftLeg) leftLeg.rotation.x = -Math.sin(phase) * amplitude * 0.8;
+        if (rightLeg) rightLeg.rotation.x = Math.sin(phase) * amplitude * 0.8;
+        if (head) head.position.y = 1.6 + Math.abs(Math.sin(phase * 2)) * 0.02;
+        if (torso) torso.rotation.x = Math.sin(phase) * 0.03;
       }
     }
 
@@ -420,17 +441,14 @@ export class Game {
     if (this.level) {
       const now = performance.now() * 0.001;
       for (const fl of this.level.flickerLights) {
-        // Layered noise: slow pulsing + fast random flicker + occasional dips
         const slow = Math.sin(now * 1.3 + fl.phase) * 0.15;
         const med = Math.sin(now * 4.7 + fl.phase * 3) * 0.1;
         const fast = Math.sin(now * 17 + fl.phase * 7) * 0.08;
-        // Occasional deep dip (stuttering bulb)
         const dip = Math.sin(now * 0.4 + fl.phase * 2) > 0.92 ? -0.5 : 0;
         fl.light.intensity = fl.baseIntensity * Math.max(0.15, 1 + slow + med + fast + dip);
       }
     }
 
-    // Update horror shader time uniform
     if (this.composer) {
       const passes = (this.composer as any).passes;
       if (passes && passes.length > 1 && passes[1].uniforms?.time) {
@@ -443,7 +461,6 @@ export class Game {
 
     this.rafId = window.requestAnimationFrame(() => this.frame());
 
-    // Restart after jumpscare
     if (this.state === 'GameOver') {
       if (performance.now() - this.gameOverAtMs > 2200) {
         this.setState('MainMenu');
