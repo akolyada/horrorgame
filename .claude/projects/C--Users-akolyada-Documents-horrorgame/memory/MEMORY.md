@@ -1,0 +1,3 @@
+- [Horror Game Vision](project_game_vision.md) — Abandoned kindergarten, living drawings as monsters, Poppy Playtime style
+- [User Profile](user_family_project.md) — Father-son team, son is creative director, communicate in Ukrainian
+- [Watch Gadget](project_watch_gadget.md) — Toy watch: weak flashlight, monster detector (beeps), navigation hints

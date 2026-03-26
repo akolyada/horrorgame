@@ -32,8 +32,15 @@ function placeModel(
   model.scale.setScalar(scale);
   model.traverse((child) => {
     if ((child as THREE.Mesh).isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
+      const mesh = child as THREE.Mesh;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      // Darken GLB furniture for horror atmosphere
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (mat && mat.color) {
+        mesh.material = mat.clone();
+        (mesh.material as THREE.MeshStandardMaterial).color.multiplyScalar(0.35);
+      }
     }
   });
   parent.add(model);
@@ -101,6 +108,7 @@ function makeRoomPlan(
         path: `${FURN}/bear.glb`,
         pos: new THREE.Vector3(cx - halfW + 1.2, 0.5, cz - halfD + 1),
         scale: 1.0,
+        obstacle: false,
       });
       break;
 
@@ -125,6 +133,7 @@ function makeRoomPlan(
         path: `${FURN}/books.glb`,
         pos: new THREE.Vector3(cx + halfW - 0.3, 0, cz - halfD + 0.5),
         scale: 1.0,
+        obstacle: false,
       });
       break;
 
@@ -167,6 +176,7 @@ function makeRoomPlan(
         path: `${FURN}/laptop.glb`,
         pos: new THREE.Vector3(cx + halfW - 0.8, 0.75, cz),
         scale: 1.0,
+        obstacle: false,
       });
       break;
 
@@ -233,10 +243,10 @@ function makeRoomPlan(
 function makeHorrorProps(cx: number, cz: number): RoomFurniturePlan {
   return {
     models: [
-      { path: `${GRAVE}/candle.glb`, pos: new THREE.Vector3(cx + 2, 0.75, cz + 1), scale: 1.5 },
-      { path: `${GRAVE}/candle-multiple.glb`, pos: new THREE.Vector3(cx - 3, 0, cz - 2), scale: 1.2 },
-      { path: `${GRAVE}/debris.glb`, pos: new THREE.Vector3(cx + 1, 0, cz + 3), scale: 1.0 },
-      { path: `${GRAVE}/debris-wood.glb`, pos: new THREE.Vector3(cx - 2, 0, cz + 5), scale: 1.0 },
+      { path: `${GRAVE}/candle.glb`, pos: new THREE.Vector3(cx + 2, 0.75, cz + 1), scale: 1.5, obstacle: false },
+      { path: `${GRAVE}/candle-multiple.glb`, pos: new THREE.Vector3(cx - 3, 0, cz - 2), scale: 1.2, obstacle: false },
+      { path: `${GRAVE}/debris.glb`, pos: new THREE.Vector3(cx + 1, 0, cz + 3), scale: 1.0, obstacle: false },
+      { path: `${GRAVE}/debris-wood.glb`, pos: new THREE.Vector3(cx - 2, 0, cz + 5), scale: 1.0, obstacle: false },
     ],
   };
 }
@@ -268,7 +278,7 @@ export async function loadFurnitureForLevel(
       const model = await loadModel(item.path);
       if (model.children.length === 0) return; // failed to load
       placeModel(model, root, item.pos, item.rotY ?? 0, item.scale ?? 1);
-      if (item.obstacle) {
+      if (item.obstacle !== false) {
         obstacles.push(aabbFromObject(model));
       }
     });

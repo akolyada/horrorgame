@@ -30,6 +30,15 @@ export type Level = {
   flickerLights: FlickerLight[];
   /** Enemy patrol waypoints */
   patrolPoints: THREE.Vector3[];
+  /** Ball gun pickup */
+  gunObj: THREE.Object3D;
+  gunPos: THREE.Vector3;
+  /** Shooting target + secret door in cafeteria */
+  targetObj: THREE.Object3D;
+  targetPos: THREE.Vector3;
+  secretDoorObj: THREE.Object3D;
+  secretDoorPos: THREE.Vector3;
+  secretDoorObstacle: AABBObstacle;
 };
 
 function makeBoxObstacle(min: THREE.Vector3, max: THREE.Vector3): AABBObstacle {
@@ -574,8 +583,15 @@ function createKindergartenLevel(root: THREE.Group): Level {
   addWall((X_MIN + CORR_HALF) / 2, WY, Z_MAX, CORR_HALF - X_MIN, WH, WALL_T);
   // West wall (X = X_MIN)
   addWall(X_MIN, WY, 0, WALL_T, WH, Z_MAX - Z_MIN);
-  // East wall (X = X_MAX)
-  addWall(X_MAX, WY, 0, WALL_T, WH, Z_MAX - Z_MIN);
+  // East wall (X = X_MAX) — with gap for secret room door in cafeteria area
+  const secretDoorZ = 0; // center of cafeteria
+  const secretGap = 1.4;
+  // North segment: Z_MIN to secretDoorZ - gap/2
+  const eNorthLen = (secretDoorZ - secretGap / 2) - Z_MIN;
+  addWall(X_MAX, WY, Z_MIN + eNorthLen / 2, WALL_T, WH, eNorthLen);
+  // South segment: secretDoorZ + gap/2 to Z_MAX
+  const eSouthLen = Z_MAX - (secretDoorZ + secretGap / 2);
+  addWall(X_MAX, WY, Z_MAX - eSouthLen / 2, WALL_T, WH, eSouthLen);
 
   // ═══════════════════════════════════════════════════════════
   //  CORRIDOR WALLS (with door gaps)
@@ -653,13 +669,13 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // ═══════════════════════════════════════════════════════════
 
   const furnitureMat = new THREE.MeshStandardMaterial({
-    color: 0x6b5a42,
+    color: 0x3a2d1e,
     roughness: 0.9,
     metalness: 0.02,
   });
 
   const furnitureColorMat = new THREE.MeshStandardMaterial({
-    color: 0x4a6b5a,  // faded green
+    color: 0x2a3d2e,  // faded green
     roughness: 0.85,
     metalness: 0.0,
   });
@@ -778,7 +794,7 @@ function createKindergartenLevel(root: THREE.Group): Level {
   addBed(-9, -6.5, 0.3, true); // flipped and rotated
 
   // Office — desk and shelves
-  const deskMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.85 });
+  const deskMat = new THREE.MeshStandardMaterial({ color: 0x2e2418, roughness: 0.85 });
   const deskGeo = new THREE.BoxGeometry(1.8, 0.7, 0.8);
   const desk = new THREE.Mesh(deskGeo, deskMat);
   desk.position.set(eastCenterX + 2, 0.35, (Z_MIN + Z_DIV1) / 2 - 1);
@@ -855,10 +871,10 @@ function createKindergartenLevel(root: THREE.Group): Level {
   // ═══════════════════════════════════════════════════════════
 
   // Ambient light — dim for horror atmosphere
-  const ambient = new THREE.AmbientLight(0x222233, 1.2);
+  const ambient = new THREE.AmbientLight(0x333344, 1.8);
   root.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0x334455, 0x1a1a22, 0.6);
+  const hemi = new THREE.HemisphereLight(0x445566, 0x222233, 1.0);
   root.add(hemi);
 
   // Room lights — every room gets a flickering ceiling light
@@ -1385,6 +1401,148 @@ function createKindergartenLevel(root: THREE.Group): Level {
     roomCenters.get('Комірка')!.clone().setY(playerHeight),
   ];
 
+  // ── Ball Gun (on the edge of the ball pit) ──
+  const gunGroup = new THREE.Group();
+  gunGroup.name = 'ballGunPickup';
+  const gunMat = new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.4, metalness: 0.3 });
+  const gunDarkMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.6, metalness: 0.5 });
+  // Barrel
+  const gBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.28, 8), gunDarkMat);
+  gBarrel.rotation.x = Math.PI / 2;
+  gBarrel.position.z = -0.14;
+  gunGroup.add(gBarrel);
+  // Body
+  const gBody = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.18), gunMat);
+  gunGroup.add(gBody);
+  // Handle
+  const gHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.05), gunDarkMat);
+  gHandle.position.set(0, -0.06, 0.04);
+  gHandle.rotation.x = 0.2;
+  gunGroup.add(gHandle);
+  // Hopper
+  const gHopper = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.035, 0.08, 8), gunMat);
+  gHopper.position.y = 0.055;
+  gunGroup.add(gHopper);
+  // Glow
+  const gunLight = new THREE.PointLight(0xff8800, 0.6, 3, 2);
+  gunLight.position.set(0, 0.2, 0);
+  gunGroup.add(gunLight);
+
+  const gunPos = new THREE.Vector3(pitCX + PIT_W / 2 - 0.4, PIT_H + 0.1, pitCZ);
+  gunGroup.position.copy(gunPos);
+  gunGroup.rotation.y = 0.5;
+  root.add(gunGroup);
+
+  // ═══════════════════════════════════════════════════════════
+  //  SECRET ROOM — beyond cafeteria east wall, opened by target
+  // ═══════════════════════════════════════════════════════════
+
+  const SECRET_X_MIN = X_MAX;         // starts where main building ends
+  const SECRET_X_MAX = X_MAX + 16;    // very large room
+  const SECRET_Z_MIN = -6;
+  const SECRET_Z_MAX = 6;
+  const secretCX = (SECRET_X_MIN + SECRET_X_MAX) / 2;
+  const secretCZ = (SECRET_Z_MIN + SECRET_Z_MAX) / 2;
+  const secretW = SECRET_X_MAX - SECRET_X_MIN;
+  const secretD = SECRET_Z_MAX - SECRET_Z_MIN;
+
+  // Floor + ceiling
+  addFloor(secretCX, secretCZ, secretW, secretD);
+  addCeiling(secretCX, secretCZ, secretW, secretD);
+
+  // Walls
+  addWall(SECRET_X_MAX, WY, secretCZ, WALL_T, WH, secretD);       // east wall
+  addWall(secretCX, WY, SECRET_Z_MIN, secretW, WH, WALL_T);       // north wall
+  addWall(secretCX, WY, SECRET_Z_MAX, secretW, WH, WALL_T);       // south wall
+  // West wall segments (gap already made in main east wall above)
+  // Top segment above gap on west side of secret room
+  const swNorthLen = (secretDoorZ - secretGap / 2) - SECRET_Z_MIN;
+  if (swNorthLen > 0.5) addWall(SECRET_X_MIN, WY, SECRET_Z_MIN + swNorthLen / 2, WALL_T, WH, swNorthLen);
+  const swSouthLen = SECRET_Z_MAX - (secretDoorZ + secretGap / 2);
+  if (swSouthLen > 0.5) addWall(SECRET_X_MIN, WY, SECRET_Z_MAX - swSouthLen / 2, WALL_T, WH, swSouthLen);
+
+  roomCenters.set('Таємна Кімната', new THREE.Vector3(secretCX, 0, secretCZ));
+
+  // Lighting — dim red/orange
+  addFlicker(secretCX - 4, secretCZ - 2, 0xff6644, 1.8);
+  addFlicker(secretCX + 4, secretCZ + 2, 0xff4422, 1.5);
+  addFlicker(secretCX, secretCZ, 0xffaa44, 2.0);
+
+  // Some rubble/debris inside
+  addRubble(secretCX + 3, secretCZ - 2, 4, 8, true);
+  addRubble(secretCX - 5, secretCZ + 3, 3, 6, false);
+  addDebris(secretCX, secretCZ, 6, 10);
+
+  // ── Secret door (blocks the gap in east wall) ──
+  const sDoorMat = new THREE.MeshStandardMaterial({
+    color: 0x553322, roughness: 0.7, metalness: 0.3,
+    emissive: 0x110500, emissiveIntensity: 0.3,
+  });
+  const sDoorGroup = new THREE.Group();
+  sDoorGroup.name = 'secretDoor';
+  const sDoorMesh = new THREE.Mesh(new THREE.BoxGeometry(WALL_T + 0.05, WH, secretGap), sDoorMat);
+  sDoorMesh.castShadow = true;
+  sDoorGroup.add(sDoorMesh);
+  // Lock indicator — red light
+  const sDoorLock = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 2.0 }),
+  );
+  sDoorLock.position.set(-0.15, 0.3, 0);
+  sDoorGroup.add(sDoorLock);
+
+  const sDoorPos = new THREE.Vector3(X_MAX, WY, secretDoorZ);
+  sDoorGroup.position.copy(sDoorPos);
+  root.add(sDoorGroup);
+  const sDoorObstacle = makeBoxObstacle(
+    new THREE.Vector3(X_MAX - WALL_T / 2 - 0.05, 0, secretDoorZ - secretGap / 2),
+    new THREE.Vector3(X_MAX + WALL_T / 2 + 0.05, WH, secretDoorZ + secretGap / 2),
+  );
+  obstacles.push(sDoorObstacle);
+
+  // ── Shooting target (on cafeteria wall, near the door) ──
+  const targetGroup = new THREE.Group();
+  targetGroup.name = 'shootingTarget';
+
+  // Backboard
+  const tBoard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 0.8, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x886644, roughness: 0.9 }),
+  );
+  targetGroup.add(tBoard);
+
+  // Rings (concentric circles via torus)
+  const ringMat1 = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3 });
+  const ringMat2 = new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff2222, emissiveIntensity: 0.5 });
+  const ringMat3 = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 0.8 });
+
+  // Outer ring (white)
+  const ring1 = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.03, 8, 24), ringMat1);
+  ring1.position.z = 0.035;
+  targetGroup.add(ring1);
+  // Middle ring (red)
+  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.03, 8, 24), ringMat2);
+  ring2.position.z = 0.035;
+  targetGroup.add(ring2);
+  // Bullseye (yellow center)
+  const bullseye = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.04, 12),
+    ringMat3,
+  );
+  bullseye.rotation.x = Math.PI / 2;
+  bullseye.position.z = 0.04;
+  targetGroup.add(bullseye);
+
+  // Target light
+  const targetLight = new THREE.PointLight(0xffaa00, 0.8, 4, 2);
+  targetLight.position.set(0, 0.5, 0.3);
+  targetGroup.add(targetLight);
+
+  // Place target on the east wall of cafeteria, next to the door
+  const targetPos = new THREE.Vector3(X_MAX - 0.04, 1.5, secretDoorZ + secretGap / 2 + 0.8);
+  targetGroup.position.copy(targetPos);
+  root.add(targetGroup);
+
   return {
     root,
     obstacles,
@@ -1402,6 +1560,13 @@ function createKindergartenLevel(root: THREE.Group): Level {
     doorObstacle,
     flickerLights,
     patrolPoints,
+    gunObj: gunGroup,
+    gunPos: gunPos.clone(),
+    targetObj: targetGroup,
+    targetPos: targetPos.clone(),
+    secretDoorObj: sDoorGroup,
+    secretDoorPos: sDoorPos.clone(),
+    secretDoorObstacle: sDoorObstacle,
   };
 }
 

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/akolyada/Documents/horrorgame -not -path */node_modules* -type d)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(ssh:*)"
+    ]
+  }
+}

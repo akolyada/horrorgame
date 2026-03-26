@@ -18,6 +18,8 @@ export class Hud {
   private keyIndicator: HTMLDivElement;
   private messageEl: HTMLDivElement;
   private messageTimeout: number | null = null;
+  private interactPrompt: HTMLDivElement;
+  private crosshair: HTMLDivElement;
 
   private onStartCb: ((level: 'default' | 'kenney') => void) | null = null;
   private onRestartCb: Callback | null = null;
@@ -155,6 +157,15 @@ export class Hud {
     this.messageEl = document.createElement('div');
     this.messageEl.className = 'game-message';
 
+    // Crosshair (center dot)
+    this.crosshair = document.createElement('div');
+    this.crosshair.className = 'crosshair';
+    this.crosshair.style.display = 'none';
+
+    // Interaction prompt
+    this.interactPrompt = document.createElement('div');
+    this.interactPrompt.className = 'interact-prompt';
+
     hudRoot.appendChild(this.mainPanel);
     hudRoot.appendChild(this.gameOverPanel);
     hudRoot.appendChild(this.winPanel);
@@ -162,6 +173,8 @@ export class Hud {
     hudRoot.appendChild(hint);
     hudRoot.appendChild(this.keyIndicator);
     hudRoot.appendChild(this.messageEl);
+    hudRoot.appendChild(this.crosshair);
+    hudRoot.appendChild(this.interactPrompt);
 
     this.rootEl.appendChild(hudRoot);
   }
@@ -184,6 +197,8 @@ export class Hud {
     this.winPanel.style.display = 'none';
     this.errorLine.style.display = 'none';
     this.keyIndicator.style.display = 'none';
+    this.crosshair.style.display = 'none';
+    this.hideInteractPrompt();
   }
 
   public showPlaying() {
@@ -192,6 +207,7 @@ export class Hud {
     this.winPanel.style.display = 'none';
     this.errorLine.style.display = 'none';
     this.keyIndicator.style.display = 'block';
+    this.crosshair.style.display = 'block';
   }
 
   public showGameOver() {
@@ -229,6 +245,17 @@ export class Hud {
     } else {
       this.keyIndicator.innerHTML = '<span class="key-icon">&#128273;</span> <span class="key-text">---</span>';
     }
+  }
+
+  public showInteractPrompt(text: string) {
+    this.interactPrompt.textContent = text;
+    this.interactPrompt.style.opacity = '1';
+    this.crosshair.classList.add('active');
+  }
+
+  public hideInteractPrompt() {
+    this.interactPrompt.style.opacity = '0';
+    this.crosshair.classList.remove('active');
   }
 
   public showMessage(text: string, durationMs: number) {

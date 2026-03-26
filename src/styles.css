@@ -216,6 +216,89 @@ body {
   border-color: rgba(255, 100, 80, 0.5) !important;
 }
 
+/* Inventory bar */
+.inventory-bar {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  z-index: 120;
+  pointer-events: auto;
+}
+
+.inv-slot {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.inv-slot.has-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.inv-slot.active {
+  border-color: rgba(255, 200, 50, 0.7);
+  background: rgba(255, 200, 50, 0.12);
+  transform: scale(1.1);
+  box-shadow: 0 0 10px rgba(255, 200, 50, 0.3);
+}
+
+/* Crosshair */
+.crosshair {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  z-index: 100;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.crosshair.active {
+  background: rgba(255, 220, 100, 0.9);
+  box-shadow: 0 0 8px rgba(255, 200, 50, 0.5);
+  transform: translate(-50%, -50%) scale(1.8);
+}
+
+/* Interact prompt */
+.interact-prompt {
+  position: fixed;
+  top: calc(50% + 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: rgba(255, 220, 100, 0.9);
+  text-shadow: 0 0 8px rgba(255, 200, 50, 0.4);
+  padding: 4px 14px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 200, 50, 0.2);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
 .watch-hint {
   font-size: 13px;
   color: rgba(180, 255, 180, 0.8);

@@ -48,6 +48,9 @@ export class EnemyController {
   private searchWanderTimer = 0;
   private searchWanderDir = new THREE.Vector3();
 
+  // Stun
+  private stunTimer = 0;
+
   constructor(props: EnemyControllerProps) {
     this.rig = props.rig;
     this.target = props.target;
@@ -67,7 +70,18 @@ export class EnemyController {
     return this.state;
   }
 
+  public stun(duration: number) {
+    this.stunTimer = duration;
+  }
+
   public update(dt: number) {
+    // Stunned — skip all AI
+    if (this.stunTimer > 0) {
+      this.stunTimer -= dt;
+      this.catchAccumMs = 0;
+      return;
+    }
+
     const enemyPos = this.rig.position.clone();
     const playerPos = this.target();
     const toPlayer = playerPos.clone().sub(enemyPos);

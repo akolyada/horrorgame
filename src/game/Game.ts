@@ -13,6 +13,8 @@ import { kitbashKenneyKindergarten } from './level/kitbashKenney';
 import { loadFurnitureForLevel, loadMonsterModel } from './level/modelLoader';
 import { AudioSystem } from './audio/AudioSystem';
 import { DustParticles } from './systems/DustParticles';
+import { BallGun } from './systems/BallGun';
+import { Inventory } from './ui/Inventory';
 
 export type GameState = 'MainMenu' | 'Playing' | 'GameOver' | 'Win';
 
@@ -21,6 +23,7 @@ export class Game {
   private readonly hud: Hud;
   private readonly audio: AudioSystem;
   private readonly input: InputSystem;
+  private readonly inventory: Inventory;
 
   private readonly scene: THREE.Scene;
   private readonly renderer: THREE.WebGLRenderer;
@@ -42,11 +45,16 @@ export class Game {
   private enemy: EnemyController | null = null;
   private watch: WatchSystem | null = null;
   private dust: DustParticles | null = null;
+  private ballGun: BallGun | null = null;
+  private hasGun = false;
+  private shootRequested = false;
+  private shootNdc: { x: number; y: number } | null = null;
 
   private gameOverAtMs = 0;
   private hasKey = false;
   private doorOpen = false;
   private doorMessageCooldown = 0;
+  private secretDoorOpen = false;
   private currentLevel: 'default' | 'kenney' = 'default';
   private damageFlash = 0;
 
@@ -55,6 +63,10 @@ export class Game {
 
   // Previous player position for speed calculation
   private prevPlayerPos = new THREE.Vector3();
+
+  // Interaction system
+  private interactTarget: 'key' | 'door' | 'gun' | null = null;
+  private interactRequested = false;
 
   constructor(rootEl: HTMLElement) {
     this.rootEl = rootEl;
@@ -69,7 +81,7 @@ export class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.6;
+    this.renderer.toneMappingExposure = 2.2;
     this.rootEl.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -187,6 +199,56 @@ export class Game {
     this.hud = new Hud(rootEl);
     this.audio = new AudioSystem();
     this.input = new InputSystem(rootEl);
+    this.inventory = new Inventory(rootEl);
+
+    // When player selects inventory item
+    this.inventory.onSelect((itemId) => {
+      // Show/hide ball gun viewmodel based on selection
+      if (itemId === 'gun' && this.ballGun) {
+        this.ballGun.show();
+      } else {
+        this.ballGun?.hide();
+      }
+    });
+
+    // Convert pointer event to NDC coords
+    const pointerToNdc = (e: PointerEvent | MouseEvent): { x: number; y: number } => {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      return {
+        x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      };
+    };
+
+    // Interact on tap / 'E' key; Shoot on tap (when gun equipped + no interact target)
+    window.addEventListener('pointerup', (e) => {
+      if (this.state !== 'Playing') return;
+      if (e.target instanceof HTMLElement && (e.target.closest('.panel') || e.target.closest('button') || e.target.closest('.joystickBase'))) return;
+      if (this.interactTarget) {
+        this.interactRequested = true;
+      } else if (this.hasGun && this.inventory.getActiveItemId() === 'gun') {
+        this.shootRequested = true;
+        this.shootNdc = pointerToNdc(e);
+      }
+    });
+    window.addEventListener('keydown', (e) => {
+      if (this.state !== 'Playing') return;
+      if (e.code === 'KeyE' || e.code === 'KeyF') {
+        this.interactRequested = true;
+      }
+      // Number keys 1-5 select inventory slots
+      const slotKey = parseInt(e.key);
+      if (slotKey >= 1 && slotKey <= 5) {
+        this.inventory.clickSlot(slotKey - 1);
+      }
+    });
+    // Dedicated shoot on left mouse button — fires toward cursor
+    window.addEventListener('mousedown', (e) => {
+      if (this.state !== 'Playing' || !this.hasGun || e.button !== 0 || this.inventory.getActiveItemId() !== 'gun') return;
+      if (e.target instanceof HTMLElement && (e.target.closest('.panel') || e.target.closest('button'))) return;
+      this.shootRequested = true;
+      this.shootNdc = pointerToNdc(e);
+    });
 
     this.hud.onStart((level) => {
       this.startGame(level).catch((err) => {
@@ -230,6 +292,7 @@ export class Game {
     if (next === 'MainMenu') {
       this.hud.showMainMenu();
       this.watch?.hide();
+      this.inventory.hide();
     }
     if (next === 'Playing') {
       this.hud.showPlaying();
@@ -258,6 +321,9 @@ export class Game {
     }
     if (this.watch) this.watch.dispose();
     if (this.dust) this.dust.dispose();
+    if (this.ballGun) this.ballGun.dispose();
+    this.ballGun = null;
+    this.hasGun = false;
     this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
@@ -317,8 +383,11 @@ export class Game {
     this.gameOverAtMs = 0;
     this.hasKey = false;
     this.doorOpen = false;
+    this.secretDoorOpen = false;
     this.doorMessageCooldown = 0;
     this.hud.setKeyStatus(false);
+    this.inventory.clear();
+    this.inventory.show();
     this.input.setEnabled(true);
     this.setState('Playing');
   }
@@ -426,40 +495,124 @@ export class Game {
       this.audio.updateMonsterBreathing(distToEnemy);
       this.audio.updateMusicTension(distToEnemy);
 
-      // Key pickup
-      if (!this.hasKey && this.level.keyObj.visible) {
-        const distToKey = currentPos.distanceTo(this.level.keyPos);
-        if (distToKey < 1.2) {
+      // ── Interaction system: distance + look direction ──
+      this.interactTarget = null;
+      const interactRange = 2.5;
+      const lookThreshold = 0.5; // dot product threshold (~60 degree cone)
+
+      // Get camera forward direction in world space
+      const camForward = new THREE.Vector3(0, 0, -1);
+      this.camera.getWorldDirection(camForward);
+      camForward.y = 0;
+      camForward.normalize();
+
+      // Helper: check if player is near AND looking toward target
+      const canInteract = (targetPos: THREE.Vector3): boolean => {
+        const dist = currentPos.distanceTo(targetPos);
+        if (dist > interactRange) return false;
+        const toTarget = targetPos.clone().sub(currentPos);
+        toTarget.y = 0;
+        toTarget.normalize();
+        return camForward.dot(toTarget) > lookThreshold;
+      };
+
+      // Check key
+      if (!this.hasKey && this.level.keyObj.visible && canInteract(this.level.keyPos)) {
+        this.interactTarget = 'key';
+      }
+
+      // Check door
+      if (!this.doorOpen && this.level.doorObj.visible && canInteract(this.level.doorPos)) {
+        this.interactTarget = 'door';
+      }
+
+      // Check gun pickup
+      if (!this.hasGun && this.level.gunObj.visible && canInteract(this.level.gunPos)) {
+        this.interactTarget = 'gun';
+      }
+
+      // Show/hide interact prompt
+      if (this.interactTarget === 'gun') {
+        this.hud.showInteractPrompt('[E] Підібрати пушку');
+      } else if (this.interactTarget === 'key') {
+        this.hud.showInteractPrompt('[E] Підібрати ключ');
+      } else if (this.interactTarget === 'door' && this.hasKey) {
+        this.hud.showInteractPrompt('[E] Відчинити двері');
+      } else if (this.interactTarget === 'door' && !this.hasKey) {
+        this.hud.showInteractPrompt('Замкнено. Потрібен ключ.');
+      } else {
+        this.hud.hideInteractPrompt();
+      }
+
+      // Process interaction
+      if (this.interactRequested && this.interactTarget) {
+        this.interactRequested = false;
+
+        if (this.interactTarget === 'gun') {
+          this.hasGun = true;
+          // Render thumbnail BEFORE hiding
+          this.inventory.addItem({ id: 'gun', name: 'Кулькова пушка', icon: '🔫', object3D: this.level.gunObj });
+          this.level.gunObj.visible = false;
+          this.ballGun = new BallGun(this.level.root, this.camera, () => this.audio.getContext(), this.level.obstacles);
+          this.inventory.selectItem('gun');
+          this.hud.showMessage('Кулькова пушка!', 2000);
+          this.audio.playPickup();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'key') {
           this.hasKey = true;
+          // Render thumbnail BEFORE hiding
+          this.inventory.addItem({ id: 'key', name: 'Ключ', icon: '🔑', object3D: this.level.keyObj });
           this.level.keyObj.visible = false;
           this.hud.setKeyStatus(true);
           this.hud.showMessage('Ключ знайдено!', 2000);
           this.audio.playPickup();
-        }
-      }
-
-      // Door unlock
-      if (this.hasKey && !this.doorOpen) {
-        const distToDoor = currentPos.distanceTo(this.level.doorPos);
-        if (distToDoor < 1.8) {
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'door' && this.hasKey) {
           this.doorOpen = true;
           const idx = this.level.obstacles.indexOf(this.level.doorObstacle);
           if (idx !== -1) this.level.obstacles.splice(idx, 1);
           this.level.doorObj.visible = false;
+          this.inventory.removeItem('key'); // key consumed
+          this.hud.setKeyStatus(false);
           this.hud.showMessage('Двері відчинено!', 2000);
           this.audio.playDoorCreak();
+          this.hud.hideInteractPrompt();
         }
       }
+      this.interactRequested = false;
 
-      // Locked door message — debounced
-      if (!this.hasKey && !this.doorOpen) {
-        this.doorMessageCooldown -= dt;
-        const distToDoor = currentPos.distanceTo(this.level.doorPos);
-        if (distToDoor < 1.5 && this.doorMessageCooldown <= 0) {
-          this.hud.showMessage('Замкнено. Потрібен ключ.', 1500);
-          this.doorMessageCooldown = 2.0; // show at most every 2 seconds
+      // ── Ball gun: shoot + update + enemy hit ──
+      if (this.ballGun) {
+        const gunActive = this.inventory.getActiveItemId() === 'gun';
+        if (this.shootRequested && gunActive) {
+          this.shootRequested = false;
+          if (this.shootNdc) {
+            this.ballGun.shoot(this.shootNdc.x, this.shootNdc.y);
+          } else {
+            this.ballGun.shoot();
+          }
+          this.shootNdc = null;
+        }
+        this.ballGun.update(dt);
+
+        // Check if ball hit shooting target FIRST (before enemy consumes the ball)
+        if (!this.secretDoorOpen) {
+          if (this.ballGun.checkHitEnemy(this.level.targetPos, 1.0)) {
+            this.secretDoorOpen = true;
+            this.level.secretDoorObj.visible = false;
+            const sIdx = this.level.obstacles.indexOf(this.level.secretDoorObstacle);
+            if (sIdx !== -1) this.level.obstacles.splice(sIdx, 1);
+            this.audio.playDoorCreak();
+          }
+        }
+
+        // Check if ball hit enemy — stun it briefly
+        if (this.ballGun.checkHitEnemy(this.level.enemyRig.position, 0.6)) {
+          this.enemy.stun(2.0);
+          this.hud.showMessage('Влучив!', 1000);
         }
       }
+      this.shootRequested = false;
 
       // Head bob
       if (moveSpeed > 0.5) {
