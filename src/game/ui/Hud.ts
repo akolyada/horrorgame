@@ -21,6 +21,13 @@ export class Hud {
   private interactPrompt: HTMLDivElement;
   private crosshair: HTMLDivElement;
 
+  private keypadPanel: HTMLDivElement;
+  private keypadDisplay: HTMLDivElement;
+  private keypadInput = '';
+  private keypadVisible = false;
+  private onKeypadSubmitCb: ((code: string) => void) | null = null;
+  private readonly keypadKeyHandler: (e: KeyboardEvent) => void;
+
   private onStartCb: (() => void) | null = null;
   private onRestartCb: Callback | null = null;
   private onSkipCb: Callback | null = null;
@@ -136,6 +143,57 @@ export class Hud {
     this.interactPrompt = document.createElement('div');
     this.interactPrompt.className = 'interact-prompt';
 
+    // Keypad panel
+    this.keypadPanel = document.createElement('div');
+    this.keypadPanel.className = 'keypad-panel';
+    this.keypadPanel.style.display = 'none';
+
+    const keypadTitle = document.createElement('div');
+    keypadTitle.className = 'keypad-title';
+    keypadTitle.textContent = 'Введіть код';
+    this.keypadPanel.appendChild(keypadTitle);
+
+    this.keypadDisplay = document.createElement('div');
+    this.keypadDisplay.className = 'keypad-display';
+    this.keypadDisplay.textContent = '____';
+    this.keypadPanel.appendChild(this.keypadDisplay);
+
+    const keypadGrid = document.createElement('div');
+    keypadGrid.className = 'keypad-grid';
+    for (let i = 1; i <= 9; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'keypad-btn';
+      btn.textContent = String(i);
+      btn.addEventListener('pointerup', (e) => { e.preventDefault(); this.keypadPress(String(i)); });
+      keypadGrid.appendChild(btn);
+    }
+    // Bottom row: clear, 0, submit
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'keypad-btn keypad-clear';
+    clearBtn.textContent = '⌫';
+    clearBtn.addEventListener('pointerup', (e) => { e.preventDefault(); this.keypadClear(); });
+    keypadGrid.appendChild(clearBtn);
+
+    const zeroBtn = document.createElement('button');
+    zeroBtn.className = 'keypad-btn';
+    zeroBtn.textContent = '0';
+    zeroBtn.addEventListener('pointerup', (e) => { e.preventDefault(); this.keypadPress('0'); });
+    keypadGrid.appendChild(zeroBtn);
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'keypad-btn keypad-ok';
+    okBtn.textContent = 'OK';
+    okBtn.addEventListener('pointerup', (e) => { e.preventDefault(); this.keypadSubmit(); });
+    keypadGrid.appendChild(okBtn);
+
+    this.keypadPanel.appendChild(keypadGrid);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'keypad-cancel';
+    cancelBtn.textContent = 'Скасувати';
+    cancelBtn.addEventListener('pointerup', (e) => { e.preventDefault(); this.hideKeypad(); });
+    this.keypadPanel.appendChild(cancelBtn);
+
     hudRoot.appendChild(this.mainPanel);
     hudRoot.appendChild(this.gameOverPanel);
     hudRoot.appendChild(this.winPanel);
@@ -145,6 +203,26 @@ export class Hud {
     hudRoot.appendChild(this.messageEl);
     hudRoot.appendChild(this.crosshair);
     hudRoot.appendChild(this.interactPrompt);
+    hudRoot.appendChild(this.keypadPanel);
+
+    // Keyboard handler for keypad
+    this.keypadKeyHandler = (e: KeyboardEvent) => {
+      if (!this.keypadVisible) return;
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+        this.keypadPress(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        this.keypadClear();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        this.keypadSubmit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.hideKeypad();
+      }
+    };
+    window.addEventListener('keydown', this.keypadKeyHandler);
 
     this.rootEl.appendChild(hudRoot);
   }
@@ -241,6 +319,49 @@ export class Hud {
     this.messageTimeout = window.setTimeout(() => {
       this.messageEl.style.opacity = '0';
     }, durationMs);
+  }
+
+  // ── Keypad ──
+
+  public showKeypad(onSubmit: (code: string) => void) {
+    this.keypadInput = '';
+    this.updateKeypadDisplay();
+    this.keypadPanel.style.display = 'flex';
+    this.keypadVisible = true;
+    this.onKeypadSubmitCb = onSubmit;
+  }
+
+  public hideKeypad() {
+    this.keypadPanel.style.display = 'none';
+    this.keypadVisible = false;
+    this.onKeypadSubmitCb = null;
+  }
+
+  public isKeypadVisible(): boolean {
+    return this.keypadVisible;
+  }
+
+  private keypadPress(digit: string) {
+    if (this.keypadInput.length < 4) {
+      this.keypadInput += digit;
+      this.updateKeypadDisplay();
+    }
+  }
+
+  private keypadClear() {
+    this.keypadInput = this.keypadInput.slice(0, -1);
+    this.updateKeypadDisplay();
+  }
+
+  private keypadSubmit() {
+    if (this.keypadInput.length === 4 && this.onKeypadSubmitCb) {
+      this.onKeypadSubmitCb(this.keypadInput);
+    }
+  }
+
+  private updateKeypadDisplay() {
+    const display = this.keypadInput.padEnd(4, '_').split('').join(' ');
+    this.keypadDisplay.textContent = display;
   }
 }
 

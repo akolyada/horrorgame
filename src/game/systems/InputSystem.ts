@@ -108,6 +108,10 @@ export class InputSystem {
     return this.pitch;
   }
 
+  public isKeyDown(code: string): boolean {
+    return this.keyState.has(code);
+  }
+
   public getMoveVector(): JoystickVector {
     // Priority: touch joystick > gamepad > keyboard
     if (Math.abs(this.move.x) > 0.001 || Math.abs(this.move.y) > 0.001) return { x: this.move.x, y: this.move.y };

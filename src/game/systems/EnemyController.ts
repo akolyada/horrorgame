@@ -215,22 +215,51 @@ export class EnemyController {
     if (dist < 1e-6) return;
     dir.multiplyScalar(1 / dist);
 
-    const moveForward = dir.clone().multiplyScalar(speed * dt);
-    const forwardNext = enemyPos.clone().add(moveForward);
+    const step = speed * dt;
+    const next = enemyPos.clone();
 
-    if (!this.wouldCollide(forwardNext)) {
-      this.rig.position.copy(forwardNext);
+    // Try full move first
+    const fullNext = enemyPos.clone().add(dir.clone().multiplyScalar(step));
+    if (!this.wouldCollide(fullNext)) {
+      next.copy(fullNext);
     } else {
-      const leftDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI * 0.35);
-      const rightDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI * 0.35);
+      // Slide along axes independently (wall-sliding)
+      const xNext = enemyPos.clone();
+      xNext.x += dir.x * step;
+      const zNext = enemyPos.clone();
+      zNext.z += dir.z * step;
 
-      const leftNext = enemyPos.clone().add(leftDir.multiplyScalar(speed * dt));
-      if (!this.wouldCollide(leftNext)) {
-        this.rig.position.copy(leftNext);
-      } else {
-        const rightNext = enemyPos.clone().add(rightDir.multiplyScalar(speed * dt));
-        if (!this.wouldCollide(rightNext)) this.rig.position.copy(rightNext);
+      if (!this.wouldCollide(xNext)) {
+        next.x = xNext.x;
       }
+      if (!this.wouldCollide(zNext)) {
+        next.z = zNext.z;
+      }
+    }
+
+    // Iterative pushout resolution (same approach as player)
+    this.resolveCollisions(next);
+    this.rig.position.copy(next);
+  }
+
+  private resolveCollisions(pos: THREE.Vector3) {
+    for (let iter = 0; iter < 4; iter++) {
+      let any = false;
+      for (const box of this.obstacles) {
+        const cx = THREE.MathUtils.clamp(pos.x, box.min.x, box.max.x);
+        const cz = THREE.MathUtils.clamp(pos.z, box.min.z, box.max.z);
+        const dx = pos.x - cx;
+        const dz = pos.z - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < this.radius * this.radius) {
+          any = true;
+          const d = Math.sqrt(Math.max(1e-9, d2));
+          const push = this.radius - d + 0.001;
+          pos.x += (dx / d) * push;
+          pos.z += (dz / d) * push;
+        }
+      }
+      if (!any) break;
     }
   }
 

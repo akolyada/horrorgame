@@ -17,6 +17,7 @@ export class PlayerController {
   private readonly rig: THREE.Object3D;
   private readonly radius: number;
   private readonly speed: number;
+  private speedMultiplier = 1.0;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly obstacles: AABBObstacle[];
 
@@ -35,6 +36,10 @@ export class PlayerController {
 
   public getPosition(): THREE.Vector3 {
     return this.rig.position.clone();
+  }
+
+  public setSpeedMultiplier(m: number) {
+    this.speedMultiplier = m;
   }
 
   public update(dt: number) {
@@ -56,7 +61,7 @@ export class PlayerController {
       .addScaledVector(right, move.x);
 
     const moveLen = desired.length();
-    if (moveLen > 1e-6) desired.multiplyScalar((this.speed * dt) / moveLen);
+    if (moveLen > 1e-6) desired.multiplyScalar((this.speed * this.speedMultiplier * dt) / moveLen);
 
     const next = this.rig.position.clone().add(desired);
     this.resolveCollisions(next);

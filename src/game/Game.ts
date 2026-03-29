@@ -9,7 +9,7 @@ import { InputSystem } from './systems/InputSystem';
 import { PlayerController } from './systems/PlayerController';
 import { EnemyController } from './systems/EnemyController';
 import { WatchSystem } from './systems/WatchSystem';
-import { loadLevel, type Level } from './level/loadLevel';
+import { loadLevel, type Level, type OpenableDoor } from './level/loadLevel';
 import { AudioSystem } from './audio/AudioSystem';
 import { DustParticles } from './systems/DustParticles';
 import { BallGun } from './systems/BallGun';
@@ -54,6 +54,22 @@ export class Game {
   private doorOpen = false;
   private doorMessageCooldown = 0;
   private secretDoorOpen = false;
+  private hasGenKey = false;
+  private genDoorOpen = false;
+  private stgDoorOpen = false;
+  private labDoorOpen = false;
+  private ventOpen = false;
+  private hasYellowBulb = false;
+  private hasBlueBulb = false;
+  private yellowBulbInstalled = false;
+  private blueBulbInstalled = false;
+  private enteredGenRoom = false;
+  private genDoorSealed = false;
+  private prone = false;
+  private proneTransition = 0; // 0 = standing, 1 = fully prone
+  private noclip = false;
+  private noclipBuffer = '';
+  private noclipSpeed = 8;
   private damageFlash = 0;
   private enemyMixer: THREE.AnimationMixer | null = null;
   private enemyModelLoaded = false;
@@ -75,8 +91,9 @@ export class Game {
   private prevPlayerPos = new THREE.Vector3();
 
   // Interaction system
-  private interactTarget: 'key' | 'door' | 'gun' | null = null;
+  private interactTarget: 'key' | 'door' | 'gun' | 'openable-door' | 'gen-key' | 'gen-door' | 'yellow-bulb' | 'blue-bulb' | 'install-bulb' | 'stg-door' | 'lab-door' | 'vent' | null = null;
   private interactRequested = false;
+  private interactOpenableDoor: OpenableDoor | null = null;
 
   constructor(rootEl: HTMLElement) {
     this.rootEl = rootEl;
@@ -253,10 +270,25 @@ export class Game {
       if (e.code === 'KeyE' || e.code === 'KeyF') {
         this.interactRequested = true;
       }
-      // Number keys 1-5 select inventory slots
+      if (e.code === 'KeyZ') {
+        this.prone = !this.prone;
+      }
+      // Number keys 1-5 select inventory slots (skip when keypad is open)
       const slotKey = parseInt(e.key);
-      if (slotKey >= 1 && slotKey <= 5) {
+      if (!this.hud.isKeypadVisible() && slotKey >= 1 && slotKey <= 5) {
         this.inventory.clickSlot(slotKey - 1);
+      }
+      // Secret noclip code: type "5152" during gameplay
+      if (!this.hud.isKeypadVisible() && e.key >= '0' && e.key <= '9') {
+        this.noclipBuffer += e.key;
+        if (this.noclipBuffer.length > 4) this.noclipBuffer = this.noclipBuffer.slice(-4);
+        if (this.noclipBuffer === '5152') {
+          this.noclip = !this.noclip;
+          this.noclipBuffer = '';
+          this.hud.showMessage(this.noclip ? 'NOCLIP ON' : 'NOCLIP OFF', 2000);
+        }
+      } else if (!(e.key >= '0' && e.key <= '9')) {
+        this.noclipBuffer = '';
       }
     });
     // Desktop: right mouse button fires gun
@@ -282,7 +314,11 @@ export class Game {
     });
     this.hud.onSkipJumpscare(() => {
       if (this.state === 'GameOver') {
-        this.setState('MainMenu');
+        if (this.enteredGenRoom && this.level) {
+          this.respawnInGenRoom();
+        } else {
+          this.setState('MainMenu');
+        }
       }
     });
   }
@@ -336,6 +372,8 @@ export class Game {
     if (this.ballGun) this.ballGun.dispose();
     this.ballGun = null;
     this.hasGun = false;
+    this.prone = false;
+    this.proneTransition = 0;
     this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
@@ -407,6 +445,16 @@ export class Game {
     this.hasKey = false;
     this.doorOpen = false;
     this.secretDoorOpen = false;
+    this.hasGenKey = false;
+    this.genDoorOpen = false;
+    this.enteredGenRoom = false;
+    this.genDoorSealed = false;
+    this.stgDoorOpen = false;
+    this.labDoorOpen = false;
+    this.hasYellowBulb = false;
+    this.hasBlueBulb = false;
+    this.yellowBulbInstalled = false;
+    this.blueBulbInstalled = false;
     this.doorMessageCooldown = 0;
     this.hud.setKeyStatus(false);
     this.inventory.clear();
@@ -415,6 +463,9 @@ export class Game {
     // Pre-render 3D thumbnails for inventory items (after clear, while objects are visible)
     this.inventory.preRenderThumbnail('key', this.level.keyObj);
     this.inventory.preRenderThumbnail('gun', this.level.gunObj);
+    this.inventory.preRenderThumbnail('gen-key', this.level.genKeyObj);
+    this.inventory.preRenderThumbnail('yellow-bulb', this.level.yellowBulbObj);
+    this.inventory.preRenderThumbnail('blue-bulb', this.level.blueBulbObj);
     this.input.setEnabled(true);
     this.setState('Playing');
 
@@ -531,7 +582,7 @@ export class Game {
   }
 
   private onCaught() {
-    if (this.state !== 'Playing') return;
+    if (this.state !== 'Playing' || this.noclip) return;
 
     this.damageFlash = 1.0;
     this.gameOverAtMs = performance.now();
@@ -539,6 +590,32 @@ export class Game {
     this.hud.triggerJumpscare();
     this.audio.playScare();
     this.input.setEnabled(false);
+  }
+
+  private respawnInGenRoom() {
+    if (!this.level) return;
+    const genCenter = this.level.roomCenters.get('Генераторна');
+    if (!genCenter) return;
+
+    const spawnPos = genCenter.clone();
+    spawnPos.y = this.level.playerHeight;
+
+    // Move player to generator room
+    this.playerRig.position.copy(spawnPos);
+    this.prevPlayerPos.copy(spawnPos);
+    this.input.reset(spawnPos);
+
+    // Move enemy back to main building patrol
+    this.level.enemyRig.position.set(0, this.level.playerHeight, 0);
+
+    // Reset damage flash
+    this.damageFlash = 0;
+
+    // Resume playing
+    this.setState('Playing');
+    this.input.setEnabled(true);
+    this.audio.startEncounter();
+    this.audio.startMusic();
   }
 
   private resize() {
@@ -562,8 +639,36 @@ export class Game {
 
     if (this.state === 'Playing' && this.level && this.player && this.enemy) {
       this.input.update(dt);
-      this.player.update(dt);
+      if (this.noclip) {
+        // Noclip: fly through walls, no collisions
+        const move = this.input.getMoveVector();
+        const cam = this.camera;
+        const fwd = new THREE.Vector3();
+        cam.getWorldDirection(fwd); // includes pitch
+        const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+        const vel = new THREE.Vector3()
+          .addScaledVector(fwd, move.y)
+          .addScaledVector(right, move.x);
+        // Space = up, ShiftLeft = down
+        if (this.input.isKeyDown('Space')) vel.y += 1;
+        if (this.input.isKeyDown('ShiftLeft')) vel.y -= 1;
+        const len = vel.length();
+        if (len > 1e-6) vel.multiplyScalar(this.noclipSpeed * dt / len);
+        this.playerRig.position.add(vel);
+      } else {
+        // Prone slows movement
+        this.player.setSpeedMultiplier(this.proneTransition > 0.1 ? 0.4 : 1.0);
+        this.player.update(dt);
+      }
       this.enemy.update(dt);
+
+      // Smooth prone transition
+      const proneTarget = this.prone ? 1 : 0;
+      this.proneTransition += (proneTarget - this.proneTransition) * Math.min(1, dt * 6);
+      // Interpolate player height: standing = playerHeight, prone = 0.3
+      const standHeight = this.level.playerHeight;
+      const proneHeight = 0.3;
+      this.playerRig.position.y = standHeight + (proneHeight - standHeight) * this.proneTransition;
 
       const currentPos = this.player.getPosition();
       const moveSpeed = currentPos.distanceTo(this.prevPlayerPos) / Math.max(dt, 0.001);
@@ -576,6 +681,9 @@ export class Game {
 
       // ── Interaction system: distance + look direction ──
       this.interactTarget = null;
+      // Skip all interaction while keypad is visible
+      const keypadOpen = this.hud.isKeypadVisible();
+      if (keypadOpen) this.interactRequested = false;
       const interactRange = 2.5;
       const lookThreshold = 0.5; // dot product threshold (~60 degree cone)
 
@@ -587,6 +695,7 @@ export class Game {
 
       // Helper: check if player is near AND looking toward target
       const canInteract = (targetPos: THREE.Vector3): boolean => {
+        if (keypadOpen) return false;
         const dist = currentPos.distanceTo(targetPos);
         if (dist > interactRange) return false;
         const toTarget = targetPos.clone().sub(currentPos);
@@ -610,6 +719,55 @@ export class Game {
         this.interactTarget = 'gun';
       }
 
+      // Check generator key
+      if (!this.hasGenKey && this.level.genKeyObj.visible && canInteract(this.level.genKeyPos)) {
+        this.interactTarget = 'gen-key';
+      }
+
+      // Check generator door
+      if (!this.genDoorOpen && this.level.genDoorObj.visible && canInteract(this.level.genDoorPos)) {
+        this.interactTarget = 'gen-door';
+      }
+
+      // Check bulb pickups
+      if (!this.hasYellowBulb && !this.yellowBulbInstalled && this.level.yellowBulbObj.visible && canInteract(this.level.yellowBulbPos)) {
+        this.interactTarget = 'yellow-bulb';
+      }
+      if (!this.hasBlueBulb && !this.blueBulbInstalled && this.level.blueBulbObj.visible && canInteract(this.level.blueBulbPos)) {
+        this.interactTarget = 'blue-bulb';
+      }
+
+      // Check generator slots (install bulb)
+      if ((this.hasYellowBulb || this.hasBlueBulb) && canInteract(this.level.generatorSlotsPos)) {
+        this.interactTarget = 'install-bulb';
+      }
+
+      // Check locked doors (only show prompt, can't open manually)
+      if (!this.stgDoorOpen && this.level.stgDoorObj.visible && canInteract(this.level.stgDoorPos)) {
+        this.interactTarget = 'stg-door';
+      }
+      if (!this.labDoorOpen && this.level.labDoorObj.visible && canInteract(this.level.labDoorPos)) {
+        this.interactTarget = 'lab-door';
+      }
+
+      // Check ventilation grate in storage room
+      if (!this.ventOpen && this.level.ventObj.visible && canInteract(this.level.ventPos)) {
+        this.interactTarget = 'vent';
+      }
+
+      // Check openable doors (both open and closed)
+      this.interactOpenableDoor = null;
+      if (!this.interactTarget) {
+        for (const od of this.level.openableDoors) {
+          if (od.animProgress > 0 && od.animProgress < 1) continue; // animating, skip
+          if (canInteract(od.pos)) {
+            this.interactTarget = 'openable-door';
+            this.interactOpenableDoor = od;
+            break;
+          }
+        }
+      }
+
       // Show/hide interact prompt
       if (this.interactTarget === 'gun') {
         this.hud.showInteractPrompt('[E] Підібрати пушку');
@@ -619,6 +777,29 @@ export class Game {
         this.hud.showInteractPrompt('[E] Відчинити двері');
       } else if (this.interactTarget === 'door' && !this.hasKey) {
         this.hud.showInteractPrompt('Замкнено. Потрібен ключ.');
+      } else if (this.interactTarget === 'gen-key') {
+        this.hud.showInteractPrompt('[E] Підібрати ключ');
+      } else if (this.interactTarget === 'gen-door' && this.hasGenKey) {
+        this.hud.showInteractPrompt('[E] Відчинити двері');
+      } else if (this.interactTarget === 'gen-door' && !this.hasGenKey) {
+        this.hud.showInteractPrompt('Замкнено. Потрібен ключ.');
+      } else if (this.interactTarget === 'yellow-bulb') {
+        this.hud.showInteractPrompt('[E] Підібрати жовту лампочку');
+      } else if (this.interactTarget === 'blue-bulb') {
+        this.hud.showInteractPrompt('[E] Підібрати синю лампочку');
+      } else if (this.interactTarget === 'install-bulb') {
+        const bulbs: string[] = [];
+        if (this.hasYellowBulb) bulbs.push('жовту');
+        if (this.hasBlueBulb) bulbs.push('синю');
+        this.hud.showInteractPrompt(`[E] Вставити ${bulbs.join(' і ')} лампочку`);
+      } else if (this.interactTarget === 'stg-door') {
+        this.hud.showInteractPrompt('Замкнено. Потрібна синя лампочка на генераторі.');
+      } else if (this.interactTarget === 'lab-door') {
+        this.hud.showInteractPrompt('Замкнено. Потрібна жовта лампочка на генераторі.');
+      } else if (this.interactTarget === 'vent') {
+        this.hud.showInteractPrompt('[E] Ввести код вентиляції');
+      } else if (this.interactTarget === 'openable-door' && this.interactOpenableDoor) {
+        this.hud.showInteractPrompt(this.interactOpenableDoor.isOpen ? '[E] Зачинити двері' : '[E] Відчинити двері');
       } else {
         this.hud.hideInteractPrompt();
       }
@@ -658,10 +839,162 @@ export class Game {
           this.hud.showMessage('Двері відчинено!', 2000);
           this.audio.playDoorCreak();
           this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'gen-key') {
+          this.hasGenKey = true;
+          this.inventory.addItem({ id: 'gen-key', name: 'Ключ від генераторної', icon: '🔑' });
+          this.level.genKeyObj.position.y = -999;
+          this.hud.showMessage('Ключ від генераторної!', 2000);
+          this.audio.playPickup();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'gen-door' && this.hasGenKey) {
+          this.genDoorOpen = true;
+          const idx = this.level.obstacles.indexOf(this.level.genDoorObstacle);
+          if (idx !== -1) this.level.obstacles.splice(idx, 1);
+          this.level.genDoorObj.position.y = -999;
+          this.inventory.removeItem('gen-key');
+          this.hud.showMessage('Двері до генераторної відчинено!', 2000);
+          this.audio.playDoorCreak();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'yellow-bulb') {
+          this.hasYellowBulb = true;
+          this.inventory.addItem({ id: 'yellow-bulb', name: 'Жовта лампочка', icon: '💡' });
+          this.level.yellowBulbObj.position.y = -999;
+          this.hud.showMessage('Жовта лампочка! Встав у генератор.', 2500);
+          this.audio.playPickup();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'blue-bulb') {
+          this.hasBlueBulb = true;
+          this.inventory.addItem({ id: 'blue-bulb', name: 'Синя лампочка', icon: '💡' });
+          this.level.blueBulbObj.position.y = -999;
+          this.hud.showMessage('Синя лампочка! Встав у генератор.', 2500);
+          this.audio.playPickup();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'install-bulb') {
+          // Install all carried bulbs
+          if (this.hasYellowBulb) {
+            this.hasYellowBulb = false;
+            this.yellowBulbInstalled = true;
+            this.inventory.removeItem('yellow-bulb');
+            // Light up yellow slot on generator
+            (this.level.genSlotYellow.material as any).color.set(0xffcc00);
+            (this.level.genSlotYellow.material as any).emissive.set(0xffaa00);
+            (this.level.genSlotYellow.material as any).emissiveIntensity = 2.0;
+            // Light up yellow indicator on lab door
+            (this.level.labDoorIndicator.material as any).color.set(0xffcc00);
+            (this.level.labDoorIndicator.material as any).emissive.set(0xffaa00);
+            (this.level.labDoorIndicator.material as any).emissiveIntensity = 2.0;
+            // Open lab door
+            this.labDoorOpen = true;
+            const idx = this.level.obstacles.indexOf(this.level.labDoorObstacle);
+            if (idx !== -1) this.level.obstacles.splice(idx, 1);
+            this.level.labDoorObj.position.y = -999;
+            this.hud.showMessage('Жовта лампочка встановлена! Лабораторію відчинено!', 3000);
+          }
+          if (this.hasBlueBulb) {
+            this.hasBlueBulb = false;
+            this.blueBulbInstalled = true;
+            this.inventory.removeItem('blue-bulb');
+            // Light up blue slot on generator
+            (this.level.genSlotBlue.material as any).color.set(0x4444ff);
+            (this.level.genSlotBlue.material as any).emissive.set(0x2222ff);
+            (this.level.genSlotBlue.material as any).emissiveIntensity = 2.0;
+            // Light up blue indicator on storage door
+            (this.level.stgDoorIndicator.material as any).color.set(0x4444ff);
+            (this.level.stgDoorIndicator.material as any).emissive.set(0x2222ff);
+            (this.level.stgDoorIndicator.material as any).emissiveIntensity = 2.0;
+            // Open storage door
+            this.stgDoorOpen = true;
+            const idx = this.level.obstacles.indexOf(this.level.stgDoorObstacle);
+            if (idx !== -1) this.level.obstacles.splice(idx, 1);
+            this.level.stgDoorObj.position.y = -999;
+            this.hud.showMessage('Синя лампочка встановлена! Склад відчинено!', 3000);
+          }
+          this.audio.playDoorCreak();
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'vent') {
+          // Show keypad UI
+          this.hud.showKeypad((code: string) => {
+            if (code === this.level!.ventCode) {
+              // Correct code — open vent
+              this.ventOpen = true;
+              const idx = this.level!.obstacles.indexOf(this.level!.ventObstacle);
+              if (idx !== -1) this.level!.obstacles.splice(idx, 1);
+              this.level!.ventObj.position.y = -999;
+              this.hud.hideKeypad();
+              this.hud.showMessage('Код вірний! Вентиляцію відчинено!', 3000);
+              this.audio.playDoorCreak();
+            } else {
+              // Wrong code
+              this.hud.showMessage('Невірний код!', 2000);
+              this.hud.hideKeypad();
+            }
+          });
+          this.hud.hideInteractPrompt();
+        } else if (this.interactTarget === 'openable-door' && this.interactOpenableDoor) {
+          const od = this.interactOpenableDoor;
+          if (od.isOpen) {
+            // Close
+            od.isOpen = false;
+            od.animProgress = 1; // will animate toward 0
+            if (!this.level.obstacles.includes(od.obstacle)) {
+              this.level.obstacles.push(od.obstacle);
+            }
+          } else {
+            // Open
+            od.isOpen = true;
+            od.animProgress = 0; // will animate toward 1
+            const idx = this.level.obstacles.indexOf(od.obstacle);
+            if (idx !== -1) this.level.obstacles.splice(idx, 1);
+          }
+          this.audio.playDoorCreak();
+          this.hud.hideInteractPrompt();
         }
         console.log(`[interact:${what}] ${(performance.now() - t0).toFixed(1)}ms`);
       }
       this.interactRequested = false;
+
+      // ── Animate openable doors (open & close) ──
+      for (const od of this.level.openableDoors) {
+        if (od.isOpen && od.animProgress < 1) {
+          od.animProgress = Math.min(1, od.animProgress + dt * 2.0);
+        } else if (!od.isOpen && od.animProgress > 0) {
+          od.animProgress = Math.max(0, od.animProgress - dt * 2.5);
+        }
+        const t = 1 - Math.pow(1 - od.animProgress, 3);
+        od.pivot.rotation.y = od.openDir * t * (Math.PI / 2);
+      }
+
+      // ── Enemy opens doors when nearby ──
+      const enemyPos3 = this.level.enemyRig.position;
+      for (const od of this.level.openableDoors) {
+        if (od.isOpen) continue;
+        const dx = enemyPos3.x - od.pos.x;
+        const dz = enemyPos3.z - od.pos.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < 1.5 * 1.5) {
+          od.isOpen = true;
+          const idx = this.level.obstacles.indexOf(od.obstacle);
+          if (idx !== -1) this.level.obstacles.splice(idx, 1);
+          this.audio.playDoorCreak();
+        }
+      }
+
+      // ── Generator room: seal door when player enters ──
+      if (this.genDoorOpen && !this.genDoorSealed) {
+        const px = currentPos.x;
+        // X_MIN = -12, player fully inside gen room
+        if (px < -12.5) {
+          this.enteredGenRoom = true;
+          this.genDoorSealed = true;
+          // Re-add door visually and as obstacle
+          this.level.genDoorObj.position.y = 0;
+          if (!this.level.obstacles.includes(this.level.genDoorObstacle)) {
+            this.level.obstacles.push(this.level.genDoorObstacle);
+          }
+          this.audio.playDoorCreak();
+          this.hud.showMessage('Двері зачинились...', 2000);
+        }
+      }
 
       // ── Ball gun: shoot + update + enemy hit ──
       if (this.ballGun) {
@@ -831,8 +1164,13 @@ export class Game {
 
     if (this.state === 'GameOver') {
       if (performance.now() - this.gameOverAtMs > 2200) {
-        this.setState('MainMenu');
-        this.input.setEnabled(false);
+        if (this.enteredGenRoom && this.level) {
+          // Respawn in generator room
+          this.respawnInGenRoom();
+        } else {
+          this.setState('MainMenu');
+          this.input.setEnabled(false);
+        }
       }
     }
   }
