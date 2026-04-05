@@ -94,6 +94,10 @@ export type Level = {
   ventObj: THREE.Object3D;
   ventPos: THREE.Vector3;
   ventObstacle: AABBObstacle;
+  /** Water kill zones (sewer) */
+  waterZones: AABBObstacle[];
+  /** Platforms the player can land on (pillars etc.) — XZ bounds + top Y */
+  platforms: { min: THREE.Vector3; max: THREE.Vector3; topY: number }[];
 };
 
 function makeBoxObstacle(min: THREE.Vector3, max: THREE.Vector3): AABBObstacle {
@@ -2604,6 +2608,8 @@ function createKindergartenLevel(root: THREE.Group): Level {
   obstacles.push(ventObstacle);
 
   // ── Ventilation duct maze (behind vent grate, south of Склад) ──
+  const waterZones: AABBObstacle[] = [];
+  const platforms: { min: THREE.Vector3; max: THREE.Vector3; topY: number }[] = [];
   {
     const DUCT_H = 0.95;       // duct height — must be prone to navigate
     const DUCT_W = 1.0;        // duct passage width
@@ -2907,6 +2913,10 @@ function createKindergartenLevel(root: THREE.Group): Level {
         mesh.rotation.x = -Math.PI / 2;
         mesh.position.set(cx, WATER_Y, cz);
         root.add(mesh);
+        waterZones.push({
+          min: new THREE.Vector3(cx - sx / 2, 0, cz - sz / 2),
+          max: new THREE.Vector3(cx + sx / 2, WATER_Y + 0.5, cz + sz / 2),
+        });
       };
 
       const addSewerLight = (x: number, z: number, color = 0x55cc66, intensity = 1.2) => {
@@ -3074,6 +3084,82 @@ function createKindergartenLevel(root: THREE.Group): Level {
       valve.position.set(mainX1 + 0.15, 1.2, mainZ);
       valve.rotation.y = Math.PI / 2;
       root.add(valve);
+
+      // ── Pillar / platform constants ──
+      const PILLAR_R = 0.45;
+      const PILLAR_H = 0.5;
+
+      // ── Entry platform at sewer entrance ──
+      {
+        const epW = DUCT_W - 0.1;
+        const epD = 0.8;
+        const epH = PILLAR_H * 0.35;
+        const epX = seg3_x;
+        const epZ = transZ1 + epD / 2;
+        const epMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(epW, epH, epD),
+          new THREE.MeshStandardMaterial({ color: 0x6a6a6a, roughness: 0.75, metalness: 0.3 }),
+        );
+        epMesh.position.set(epX, epH / 2, epZ);
+        epMesh.castShadow = true;
+        epMesh.receiveShadow = true;
+        root.add(epMesh);
+        obstacles.push({
+          min: new THREE.Vector3(epX - epW / 2, 0, epZ - epD / 2),
+          max: new THREE.Vector3(epX + epW / 2, epH, epZ + epD / 2),
+        });
+        platforms.push({
+          min: new THREE.Vector3(epX - epW / 2, 0, epZ - epD / 2),
+          max: new THREE.Vector3(epX + epW / 2, epH, epZ + epD / 2),
+          topY: epH,
+        });
+      }
+
+      // ── Pillars (stepping stones across water) ──
+      const pillarMat = new THREE.MeshStandardMaterial({
+        color: 0x5a5a5a, roughness: 0.8, metalness: 0.3,
+      });
+      const pillarPositions: [number, number][] = [
+        // Main tunnel — path from entry towards east
+        [mainCX - 3, mainZ],
+        [mainCX - 1.5, mainZ + 0.2],
+        [mainCX, mainZ - 0.2],
+        [mainCX + 1.5, mainZ],
+        [mainCX + 3, mainZ + 0.2],
+        [mainCX + 4.5, mainZ - 0.2],
+        [mainCX + 6, mainZ],
+        // Branch — path going south
+        [branchX, branchZ1 + 1.2],
+        [branchX - 0.2, branchZ1 + 2.6],
+        [branchX + 0.2, branchZ1 + 4.0],
+        [branchX, branchZ1 + 5.4],
+        [branchX - 0.2, branchZ1 + 6.8],
+        [branchX, branchZ1 + 8.2],
+        // East extension
+        [eastCX - 1.5, mainZ],
+        [eastCX, mainZ + 0.2],
+        [eastCX + 1.5, mainZ - 0.2],
+        [eastCX + 3, mainZ],
+      ];
+      for (const [px, pz] of pillarPositions) {
+        const geo = new THREE.CylinderGeometry(PILLAR_R, PILLAR_R + 0.05, PILLAR_H, 8);
+        const mesh = new THREE.Mesh(geo, pillarMat);
+        mesh.position.set(px, PILLAR_H / 2, pz);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        root.add(mesh);
+        // XZ collision obstacle
+        obstacles.push({
+          min: new THREE.Vector3(px - PILLAR_R, 0, pz - PILLAR_R),
+          max: new THREE.Vector3(px + PILLAR_R, PILLAR_H, pz + PILLAR_R),
+        });
+        // Platform for landing
+        platforms.push({
+          min: new THREE.Vector3(px - PILLAR_R, 0, pz - PILLAR_R),
+          max: new THREE.Vector3(px + PILLAR_R, PILLAR_H, pz + PILLAR_R),
+          topY: PILLAR_H,
+        });
+      }
 
       // Warning sign on wall
       const signTex = makeCanvasTexture(128, 128, (ctx) => {
@@ -3615,6 +3701,8 @@ function createKindergartenLevel(root: THREE.Group): Level {
     ventObj: ventGrateGroup,
     ventPos: ventPos.clone(),
     ventObstacle,
+    waterZones,
+    platforms,
   };
 }
 

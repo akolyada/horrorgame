@@ -67,6 +67,11 @@ export class Game {
   private genDoorSealed = false;
   private prone = false;
   private proneTransition = 0; // 0 = standing, 1 = fully prone
+  private jumpVelocity = 0;
+  private jumpOffset = 0; // current vertical offset from jump
+  private currentPlatformY = 0; // top of platform player is standing on
+  private readonly jumpStrength = 4.5;
+  private readonly gravity = 12;
   private noclip = false;
   private noclipBuffer = '';
   private noclipSpeed = 8;
@@ -374,6 +379,9 @@ export class Game {
     this.hasGun = false;
     this.prone = false;
     this.proneTransition = 0;
+    this.jumpVelocity = 0;
+    this.jumpOffset = 0;
+    this.currentPlatformY = 0;
     this.audio.stopAll();
 
     this.level = loadLevel(this.scene);
@@ -592,6 +600,15 @@ export class Game {
     this.input.setEnabled(false);
   }
 
+  private onDrowned() {
+    if (this.state !== 'Playing') return;
+    this.damageFlash = 1.0;
+    this.gameOverAtMs = performance.now();
+    this.setState('GameOver');
+    this.audio.playScare();
+    this.input.setEnabled(false);
+  }
+
   private respawnInGenRoom() {
     if (!this.level) return;
     const genCenter = this.level.roomCenters.get('Генераторна');
@@ -659,6 +676,31 @@ export class Game {
         // Prone slows movement
         this.player.setSpeedMultiplier(this.proneTransition > 0.1 ? 0.4 : 1.0);
         this.player.update(dt);
+
+        // Jump
+        const onGround = this.jumpVelocity <= 0 && this.jumpOffset <= this.currentPlatformY + 0.01;
+        if (this.input.isKeyDown('Space') && onGround && !this.prone) {
+          this.jumpVelocity = this.jumpStrength;
+        }
+        this.jumpVelocity -= this.gravity * dt;
+        this.jumpOffset += this.jumpVelocity * dt;
+
+        // Find platform under player
+        const pPos = this.player.getPosition();
+        const px = pPos.x;
+        const pz = pPos.z;
+        let landY = 0;
+        for (const plat of this.level.platforms) {
+          if (px >= plat.min.x && px <= plat.max.x && pz >= plat.min.z && pz <= plat.max.z) {
+            if (plat.topY > landY) landY = plat.topY;
+          }
+        }
+        this.currentPlatformY = landY;
+
+        if (this.jumpOffset <= landY) {
+          this.jumpOffset = landY;
+          this.jumpVelocity = 0;
+        }
       }
       this.enemy.update(dt);
 
@@ -668,7 +710,7 @@ export class Game {
       // Interpolate player height: standing = playerHeight, prone = 0.3
       const standHeight = this.level.playerHeight;
       const proneHeight = 0.3;
-      this.playerRig.position.y = standHeight + (proneHeight - standHeight) * this.proneTransition;
+      this.playerRig.position.y = standHeight + (proneHeight - standHeight) * this.proneTransition + this.jumpOffset;
 
       const currentPos = this.player.getPosition();
       const moveSpeed = currentPos.distanceTo(this.prevPlayerPos) / Math.max(dt, 0.001);
@@ -678,6 +720,27 @@ export class Game {
       const distToEnemy = currentPos.distanceTo(this.level.enemyRig.position);
       this.audio.updateMonsterBreathing(distToEnemy);
       this.audio.updateMusicTension(distToEnemy);
+
+      // Water kill — player dies if standing in sewer water (not on a pillar or jumping)
+      if (!this.noclip && this.jumpOffset < 0.01) {
+        const px = currentPos.x;
+        const pz = currentPos.z;
+        let onPlatform = false;
+        for (const plat of this.level.platforms) {
+          if (px >= plat.min.x && px <= plat.max.x && pz >= plat.min.z && pz <= plat.max.z) {
+            onPlatform = true;
+            break;
+          }
+        }
+        if (!onPlatform) {
+          for (const wz of this.level.waterZones) {
+            if (px >= wz.min.x && px <= wz.max.x && pz >= wz.min.z && pz <= wz.max.z) {
+              this.onDrowned();
+              break;
+            }
+          }
+        }
+      }
 
       // ── Interaction system: distance + look direction ──
       this.interactTarget = null;
